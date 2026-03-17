@@ -1,5 +1,7 @@
 interface Env {
-  AI: Ai;
+  AI: {
+    run: (model: string, inputs: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  };
 }
 
 const HTML_PAGE = `<!doctype html>
@@ -62,12 +64,30 @@ const HTML_PAGE = `<!doctype html>
       }
       .result {
         margin-top: 16px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .result-card {
         border: 1px solid #334155;
         border-radius: 12px;
         min-height: 320px;
         background: #020617;
         padding: 16px;
         overflow: auto;
+      }
+      .result-card.full-row {
+        grid-column: 1 / -1;
+      }
+      .result-title {
+        margin: 0 0 10px;
+        font-size: 14px;
+        color: #93c5fd;
+      }
+      .result-tip {
+        margin: 0 0 10px;
+        font-size: 12px;
+        color: #94a3b8;
       }
       pre {
         margin: 0;
@@ -103,7 +123,20 @@ const HTML_PAGE = `<!doctype html>
       </div>
 
       <section class="result">
-        <pre id="output">这里会显示 VTT 结果...</pre>
+        <div class="result-card">
+          <h2 class="result-title">VTT（带时间戳）</h2>
+          <pre id="outputVtt">这里会显示 VTT 结果...</pre>
+        </div>
+        <div class="result-card">
+          <h2 class="result-title">Text（纯文本）</h2>
+          <p class="result-tip">通常不带时间戳，便于快速阅读整段内容。</p>
+          <pre id="outputText">这里会显示 Text 结果...</pre>
+        </div>
+        <div class="result-card full-row">
+          <h2 class="result-title">Segments（分段时间轴）</h2>
+          <p class="result-tip">每段包含开始/结束时间，适合检查切分质量。</p>
+          <pre id="outputSegments">这里会显示 Segments 结果...</pre>
+        </div>
       </section>
     </main>
 
@@ -111,7 +144,9 @@ const HTML_PAGE = `<!doctype html>
       const dropzone = document.getElementById("dropzone");
       const fileInput = document.getElementById("fileInput");
       const extractBtn = document.getElementById("extractBtn");
-      const output = document.getElementById("output");
+      const outputVtt = document.getElementById("outputVtt");
+      const outputText = document.getElementById("outputText");
+      const outputSegments = document.getElementById("outputSegments");
       const fileInfo = document.getElementById("fileInfo");
 
       let selectedFile = null;
@@ -136,6 +171,36 @@ const HTML_PAGE = `<!doctype html>
           return;
         }
         fileInfo.textContent = file.name + " (" + formatBytes(file.size) + ")";
+      }
+
+      function formatSeconds(seconds) {
+        if (typeof seconds !== "number" || Number.isNaN(seconds)) return "00:00:00.000";
+        const totalMs = Math.max(0, Math.floor(seconds * 1000));
+        const ms = totalMs % 1000;
+        const totalSec = Math.floor(totalMs / 1000);
+        const sec = totalSec % 60;
+        const totalMin = Math.floor(totalSec / 60);
+        const min = totalMin % 60;
+        const hour = Math.floor(totalMin / 60);
+        return String(hour).padStart(2, "0")
+          + ":" + String(min).padStart(2, "0")
+          + ":" + String(sec).padStart(2, "0")
+          + "." + String(ms).padStart(3, "0");
+      }
+
+      function renderSegments(segments) {
+        if (!Array.isArray(segments) || segments.length === 0) {
+          return "没有返回 Segments 内容";
+        }
+
+        return segments.map((segment, index) => {
+          const start = formatSeconds(segment?.start);
+          const end = formatSeconds(segment?.end);
+          const text = typeof segment?.text === "string" ? segment.text.trim() : "";
+          return "[" + String(index + 1).padStart(3, "0") + "] "
+            + start + " --> " + end + "\\n"
+            + (text || "(空文本)");
+        }).join("\\n\\n");
       }
 
       dropzone.addEventListener("click", () => fileInput.click());
@@ -167,7 +232,9 @@ const HTML_PAGE = `<!doctype html>
         const formData = new FormData();
         formData.append("file", selectedFile);
 
-        output.textContent = "正在提取字幕，请稍候...";
+        outputVtt.textContent = "正在提取字幕，请稍候...";
+        outputText.textContent = "正在提取字幕，请稍候...";
+        outputSegments.textContent = "正在提取字幕，请稍候...";
         extractBtn.disabled = true;
 
         try {
@@ -181,9 +248,14 @@ const HTML_PAGE = `<!doctype html>
             throw new Error(data.error || "字幕提取失败");
           }
 
-          output.textContent = data.vtt || data.text || "没有返回字幕内容";
+          outputVtt.textContent = data.vtt || "没有返回 VTT 内容";
+          outputText.textContent = data.text || "没有返回 Text 内容";
+          outputSegments.textContent = renderSegments(data.segments);
         } catch (error) {
-          output.innerHTML = '<span class="error">' + (error.message || "请求失败") + "</span>";
+          const message = error.message || "请求失败";
+          outputVtt.innerHTML = '<span class="error">' + message + "</span>";
+          outputText.innerHTML = '<span class="error">' + message + "</span>";
+          outputSegments.innerHTML = '<span class="error">' + message + "</span>";
         } finally {
           extractBtn.disabled = false;
         }
@@ -256,6 +328,7 @@ export default {
         return json({
           vtt: typeof result?.vtt === "string" ? result.vtt : "",
           text: typeof result?.text === "string" ? result.text : "",
+          segments: Array.isArray(result?.segments) ? result.segments : [],
           transcription_info: result?.transcription_info ?? null
         });
       } catch (error) {
