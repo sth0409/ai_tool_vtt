@@ -203,6 +203,13 @@ const HTML_PAGE = `<!doctype html>
         }).join("\\n\\n");
       }
 
+      function buildHttpErrorHint(status) {
+        if (status === 413) return "上传文件太大（HTTP 413）。建议先压缩视频或只上传音频。";
+        if (status === 401 || status === 403) return "Cloudflare 鉴权失败（HTTP " + status + "）。请检查 Wrangler 登录/API Token。";
+        if (status >= 500) return "服务端错误（HTTP " + status + "），请稍后重试。";
+        return "请求失败（HTTP " + status + "）。";
+      }
+
       dropzone.addEventListener("click", () => fileInput.click());
 
       dropzone.addEventListener("dragover", (event) => {
@@ -243,22 +250,30 @@ const HTML_PAGE = `<!doctype html>
             body: formData
           });
 
+          const responseContentType = response.headers.get("content-type") || "(unknown)";
           const raw = await response.text();
-          let data = {};
+          let data = null;
           try {
             data = raw ? JSON.parse(raw) : {};
           } catch {
-            const shortText = raw.slice(0, 160).replace(/\\s+/g, " ");
-            throw new Error("服务返回了非 JSON 响应：" + shortText);
+            const shortText = raw.slice(0, 200).replace(/\\s+/g, " ").trim() || "(empty body)";
+            const hint = buildHttpErrorHint(response.status);
+            throw new Error(
+              hint
+              + "\\ncontent-type: " + responseContentType
+              + "\\n响应片段: " + shortText
+            );
           }
 
           if (!response.ok) {
-            throw new Error(data.error || "字幕提取失败");
+            const backendError = data && typeof data.error === "string" ? data.error : null;
+            throw new Error(backendError || buildHttpErrorHint(response.status));
           }
 
-          outputVtt.textContent = data.vtt || "没有返回 VTT 内容";
-          outputText.textContent = data.text || "没有返回 Text 内容";
-          outputSegments.textContent = renderSegments(data.segments);
+          const result = data && typeof data === "object" ? data : {};
+          outputVtt.textContent = typeof result.vtt === "string" ? result.vtt : "没有返回 VTT 内容";
+          outputText.textContent = typeof result.text === "string" ? result.text : "没有返回 Text 内容";
+          outputSegments.textContent = renderSegments(result.segments);
         } catch (error) {
           const message = error.message || "请求失败";
           outputVtt.innerHTML = '<span class="error">' + message + "</span>";
