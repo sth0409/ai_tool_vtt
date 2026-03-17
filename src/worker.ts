@@ -243,7 +243,15 @@ const HTML_PAGE = `<!doctype html>
             body: formData
           });
 
-          const data = await response.json();
+          const raw = await response.text();
+          let data = {};
+          try {
+            data = raw ? JSON.parse(raw) : {};
+          } catch {
+            const shortText = raw.slice(0, 160).replace(/\\s+/g, " ");
+            throw new Error("服务返回了非 JSON 响应：" + shortText);
+          }
+
           if (!response.ok) {
             throw new Error(data.error || "字幕提取失败");
           }
