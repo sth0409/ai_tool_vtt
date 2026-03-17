@@ -4,7 +4,7 @@ interface Env {
   };
 }
 
-const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 const HTML_PAGE = `<!doctype html>
 <html lang="zh-CN">
@@ -150,7 +150,7 @@ const HTML_PAGE = `<!doctype html>
       const outputText = document.getElementById("outputText");
       const outputSegments = document.getElementById("outputSegments");
       const fileInfo = document.getElementById("fileInfo");
-      const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+      const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
       let selectedFile = null;
 
@@ -175,7 +175,7 @@ const HTML_PAGE = `<!doctype html>
         }
         if (file.size > MAX_UPLOAD_BYTES) {
           extractBtn.disabled = true;
-          fileInfo.textContent = file.name + " (" + formatBytes(file.size) + ")，文件过大，请控制在 25MB 内";
+          fileInfo.textContent = file.name + " (" + formatBytes(file.size) + ")，文件过大，请控制在 50MB 内";
           return;
         }
         fileInfo.textContent = file.name + " (" + formatBytes(file.size) + ")";
@@ -270,7 +270,7 @@ const HTML_PAGE = `<!doctype html>
       extractBtn.addEventListener("click", async () => {
         if (!selectedFile) return;
         if (selectedFile.size > MAX_UPLOAD_BYTES) {
-          const message = "文件超过 25MB，建议先压缩视频或提取音频后再上传。";
+          const message = "文件超过 50MB，建议先压缩视频或提取音频后再上传。";
           outputVtt.innerHTML = '<span class="error">' + message + "</span>";
           outputText.innerHTML = '<span class="error">' + message + "</span>";
           outputSegments.innerHTML = '<span class="error">' + message + "</span>";
@@ -378,7 +378,7 @@ export default {
         return json({ error: "仅支持视频或音频文件" }, 400);
       }
       if (file.size > MAX_UPLOAD_BYTES) {
-        return json({ error: "文件超过 25MB，建议压缩后重试" }, 413);
+        return json({ error: "文件超过 50MB，建议压缩后重试" }, 413);
       }
 
       const audioBuffer = await file.arrayBuffer();
