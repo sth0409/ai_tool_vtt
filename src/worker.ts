@@ -11,7 +11,7 @@ const HTML_PAGE = `<!doctype html>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>视频转 VTT 字幕</title>
+    <title>视频字幕工具箱</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -26,6 +26,32 @@ const HTML_PAGE = `<!doctype html>
         max-width: 900px;
         margin: 24px auto;
         padding: 16px;
+      }
+      .tabs {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+      .tab-btn {
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-size: 14px;
+        font-weight: 600;
+        background: #0b1220;
+        color: #cbd5e1;
+        cursor: pointer;
+      }
+      .tab-btn.active {
+        background: #1d4ed8;
+        border-color: #60a5fa;
+        color: #f8fafc;
+      }
+      .panel {
+        display: none;
+      }
+      .panel.active {
+        display: block;
       }
       .dropzone {
         border: 2px dashed #64748b;
@@ -49,6 +75,12 @@ const HTML_PAGE = `<!doctype html>
       }
       .actions {
         margin-top: 16px;
+      }
+      .actions-row {
+        margin-top: 12px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
       }
       button {
         border: 0;
@@ -105,44 +137,147 @@ const HTML_PAGE = `<!doctype html>
       .error {
         color: #fca5a5;
       }
+      .field {
+        margin-top: 14px;
+      }
+      .field label {
+        display: block;
+        margin-bottom: 6px;
+        color: #cbd5e1;
+        font-size: 14px;
+      }
+      textarea,
+      input[type="text"] {
+        width: 100%;
+        border: 1px solid #334155;
+        border-radius: 10px;
+        background: #020617;
+        color: #e2e8f0;
+        padding: 10px 12px;
+        box-sizing: border-box;
+        font-size: 14px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      textarea {
+        min-height: 180px;
+        resize: vertical;
+      }
+      .mini-grid {
+        margin-top: 10px;
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 10px;
+      }
+      .hint-line {
+        margin-top: 8px;
+        color: #94a3b8;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      @media (max-width: 820px) {
+        .mini-grid,
+        .result {
+          grid-template-columns: 1fr;
+        }
+      }
     </style>
   </head>
   <body>
     <main class="container">
-      <h1>视频转 VTT 字幕</h1>
-
-      <section id="dropzone" class="dropzone">
-        <div>
-          <p><strong>拖拽视频到这里</strong>，或者点击选择文件</p>
-          <p class="hint">支持常见视频格式（mp4 / mov / webm 等）</p>
-          <div id="fileInfo" class="file-info">尚未选择文件</div>
-        </div>
-      </section>
-      <input id="fileInput" type="file" accept="video/*,audio/*" hidden />
-
-      <div class="actions">
-        <button id="extractBtn" disabled>提取字幕</button>
+      <h1>视频字幕工具箱</h1>
+      <div class="tabs">
+        <button id="tabExtract" class="tab-btn active" type="button">1) 提取字幕</button>
+        <button id="tabAss" class="tab-btn" type="button">2) 关键词高亮（ASS）</button>
       </div>
 
-      <section class="result">
-        <div class="result-card">
-          <h2 class="result-title">VTT（带时间戳）</h2>
-          <pre id="outputVtt">这里会显示 VTT 结果...</pre>
+      <section id="panelExtract" class="panel active">
+        <section id="dropzone" class="dropzone">
+          <div>
+            <p><strong>拖拽视频到这里</strong>，或者点击选择文件</p>
+            <p class="hint">支持常见视频格式（mp4 / mov / webm 等）</p>
+            <div id="fileInfo" class="file-info">尚未选择文件</div>
+          </div>
+        </section>
+        <input id="fileInput" type="file" accept="video/*,audio/*" hidden />
+
+        <div class="actions">
+          <button id="extractBtn" disabled>提取字幕</button>
         </div>
-        <div class="result-card">
-          <h2 class="result-title">Text（纯文本）</h2>
-          <p class="result-tip">通常不带时间戳，便于快速阅读整段内容。</p>
-          <pre id="outputText">这里会显示 Text 结果...</pre>
+
+        <section class="result">
+          <div class="result-card">
+            <h2 class="result-title">VTT（带时间戳）</h2>
+            <pre id="outputVtt">这里会显示 VTT 结果...</pre>
+          </div>
+          <div class="result-card">
+            <h2 class="result-title">Text（纯文本）</h2>
+            <p class="result-tip">通常不带时间戳，便于快速阅读整段内容。</p>
+            <pre id="outputText">这里会显示 Text 结果...</pre>
+          </div>
+          <div class="result-card full-row">
+            <h2 class="result-title">Segments（分段时间轴）</h2>
+            <p class="result-tip">每段包含开始/结束时间，适合检查切分质量。</p>
+            <pre id="outputSegments">这里会显示 Segments 结果...</pre>
+          </div>
+        </section>
+      </section>
+
+      <section id="panelAss" class="panel">
+        <div class="field">
+          <label for="subtitleInput">输入字幕分段（你当前格式）</label>
+          <textarea id="subtitleInput" placeholder="[001] 00:00:00.000 --> 00:00:01.760
+I just want to hook up with a guy who's hot.
+
+[002] 00:00:01.900 --> 00:00:03.820
+I just want a guy who's good-looking and fun."></textarea>
         </div>
-        <div class="result-card full-row">
-          <h2 class="result-title">Segments（分段时间轴）</h2>
-          <p class="result-tip">每段包含开始/结束时间，适合检查切分质量。</p>
-          <pre id="outputSegments">这里会显示 Segments 结果...</pre>
+        <div class="field">
+          <label for="keywordRules">高亮规则（每行一条）</label>
+          <textarea id="keywordRules" placeholder="hot
+003|in shape"></textarea>
+          <div class="hint-line">
+            规则说明：<br />
+            1) 仅写词（如 hot）= 全局高亮；<br />
+            2) 行号+竖线（如 003|in shape）= 仅第 003 行高亮该词；<br />
+            3) 支持词组，忽略大小写匹配。
+          </div>
         </div>
+        <div class="mini-grid">
+          <div class="field">
+            <label for="highlightColor">高亮色（BGR）</label>
+            <input id="highlightColor" type="text" value="&H0000FFFF" />
+          </div>
+          <div class="field">
+            <label for="defaultColor">默认色（BGR）</label>
+            <input id="defaultColor" type="text" value="&H00FFFFFF" />
+          </div>
+          <div class="field">
+            <label for="fontSize">字号</label>
+            <input id="fontSize" type="text" value="48" />
+          </div>
+        </div>
+        <div class="actions-row">
+          <button id="generateAssBtn" type="button">生成 ASS + 命令</button>
+        </div>
+        <section class="result">
+          <div class="result-card full-row">
+            <h2 class="result-title">ASS 字幕内容</h2>
+            <pre id="outputAss">这里会显示 ASS 内容...</pre>
+          </div>
+          <div class="result-card full-row">
+            <h2 class="result-title">ffmpeg 命令</h2>
+            <p class="result-tip">将 ASS 内容保存为 subtitle.ass 后，在本地终端执行。</p>
+            <pre id="outputCmd">这里会显示 ffmpeg 命令...</pre>
+          </div>
+        </section>
       </section>
     </main>
 
     <script>
+      const tabExtract = document.getElementById("tabExtract");
+      const tabAss = document.getElementById("tabAss");
+      const panelExtract = document.getElementById("panelExtract");
+      const panelAss = document.getElementById("panelAss");
       const dropzone = document.getElementById("dropzone");
       const fileInput = document.getElementById("fileInput");
       const extractBtn = document.getElementById("extractBtn");
@@ -150,9 +285,28 @@ const HTML_PAGE = `<!doctype html>
       const outputText = document.getElementById("outputText");
       const outputSegments = document.getElementById("outputSegments");
       const fileInfo = document.getElementById("fileInfo");
+      const subtitleInput = document.getElementById("subtitleInput");
+      const keywordRules = document.getElementById("keywordRules");
+      const highlightColor = document.getElementById("highlightColor");
+      const defaultColor = document.getElementById("defaultColor");
+      const fontSize = document.getElementById("fontSize");
+      const generateAssBtn = document.getElementById("generateAssBtn");
+      const outputAss = document.getElementById("outputAss");
+      const outputCmd = document.getElementById("outputCmd");
       const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
       let selectedFile = null;
+
+      function setActiveTab(tab) {
+        const showExtract = tab === "extract";
+        tabExtract.classList.toggle("active", showExtract);
+        tabAss.classList.toggle("active", !showExtract);
+        panelExtract.classList.toggle("active", showExtract);
+        panelAss.classList.toggle("active", !showExtract);
+      }
+
+      tabExtract.addEventListener("click", () => setActiveTab("extract"));
+      tabAss.addEventListener("click", () => setActiveTab("ass"));
 
       function formatBytes(bytes) {
         if (!bytes) return "0 B";
@@ -323,6 +477,152 @@ const HTML_PAGE = `<!doctype html>
         } finally {
           extractBtn.disabled = false;
         }
+      });
+
+      function normalizeAssColor(input, fallback) {
+        const value = String(input || "").trim().toUpperCase();
+        if (/^&H[0-9A-F]{8}$/.test(value)) return value;
+        return fallback;
+      }
+
+      function escapeRegExp(value) {
+        return value.replace(/[.*+?^\${}()|[\]\\]/g, "\\$&");
+      }
+
+      function escapeAssText(text) {
+        return text
+          .replace(/\\/g, "\\\\")
+          .replace(/\{/g, "\\{")
+          .replace(/\}/g, "\\}");
+      }
+
+      function parseCueBlocks(input) {
+        const blocks = input
+          .replace(/\r\n/g, "\n")
+          .trim()
+          .split(/\n{2,}/)
+          .map((block) => block.trim())
+          .filter(Boolean);
+
+        const cues = [];
+        for (const block of blocks) {
+          const lines = block.split("\n").map((line) => line.trimEnd());
+          if (lines.length < 2) continue;
+          const match = lines[0].match(/^\[(\d+)\]\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})$/);
+          if (!match) continue;
+          const text = lines.slice(1).join("\n").trim();
+          cues.push({
+            index: match[1].padStart(3, "0"),
+            start: match[2],
+            end: match[3],
+            text
+          });
+        }
+        return cues;
+      }
+
+      function parseRules(input) {
+        return input
+          .replace(/\r\n/g, "\n")
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const withLine = line.match(/^(\d{1,4})\s*\|\s*(.+)$/);
+            if (withLine) {
+              return { line: withLine[1].padStart(3, "0"), word: withLine[2].trim() };
+            }
+            return { line: null, word: line };
+          })
+          .filter((rule) => rule.word.length > 0);
+      }
+
+      function toAssTime(timeWithMs) {
+        const m = timeWithMs.match(/^(\d{2}):(\d{2}):(\d{2})\.(\d{3})$/);
+        if (!m) return "0:00:00.00";
+        const hour = Number(m[1]);
+        const min = Number(m[2]);
+        const sec = Number(m[3]);
+        const ms = Number(m[4]);
+        const cs = Math.floor(ms / 10);
+        return String(hour) + ":" + String(min).padStart(2, "0") + ":" + String(sec).padStart(2, "0") + "." + String(cs).padStart(2, "0");
+      }
+
+      function applyHighlight(rawText, cueIndex, rules, hitColor, normalColor) {
+        const escaped = escapeAssText(rawText);
+        const words = rules
+          .filter((rule) => !rule.line || rule.line === cueIndex)
+          .map((rule) => rule.word.trim())
+          .filter(Boolean);
+
+        if (words.length === 0) return escaped.replace(/\n/g, "\\N");
+
+        const uniqueWords = [...new Set(words)].sort((a, b) => b.length - a.length);
+        let highlighted = escaped;
+        for (const word of uniqueWords) {
+          const escapedWord = escapeAssText(word);
+          if (!escapedWord) continue;
+          const pattern = new RegExp(escapeRegExp(escapedWord), "gi");
+          highlighted = highlighted.replace(
+            pattern,
+            "{\\\\c" + hitColor + "}$&{\\\\c" + normalColor + "}"
+          );
+        }
+        return highlighted.replace(/\n/g, "\\N");
+      }
+
+      function buildAssContent(cues, rules, hitColor, normalColor, fontSizeValue) {
+        const sizeNum = Number(fontSizeValue);
+        const safeSize = Number.isFinite(sizeNum) && sizeNum > 0 ? Math.round(sizeNum) : 48;
+        const lines = [
+          "[Script Info]",
+          "ScriptType: v4.00+",
+          "PlayResX: 1920",
+          "PlayResY: 1080",
+          "",
+          "[V4+ Styles]",
+          "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+          "Style: Default,Arial," + safeSize + "," + normalColor + ",&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1",
+          "",
+          "[Events]",
+          "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
+        ];
+
+        for (const cue of cues) {
+          const text = applyHighlight(cue.text, cue.index, rules, hitColor, normalColor);
+          lines.push("Dialogue: 0," + toAssTime(cue.start) + "," + toAssTime(cue.end) + ",Default,,0,0,0,," + text);
+        }
+        return lines.join("\\n");
+      }
+
+      generateAssBtn.addEventListener("click", () => {
+        const cues = parseCueBlocks(subtitleInput.value || "");
+        if (cues.length === 0) {
+          const message = "未识别到有效字幕块，请检查输入格式是否为 [001] + 时间轴 + 文本。";
+          outputAss.innerHTML = '<span class="error">' + message + "</span>";
+          outputCmd.innerHTML = '<span class="error">' + message + "</span>";
+          return;
+        }
+
+        const rules = parseRules(keywordRules.value || "");
+        if (rules.length === 0) {
+          const message = "请至少填写一个高亮词规则。";
+          outputAss.innerHTML = '<span class="error">' + message + "</span>";
+          outputCmd.innerHTML = '<span class="error">' + message + "</span>";
+          return;
+        }
+
+        const hitColor = normalizeAssColor(highlightColor.value, "&H0000FFFF");
+        const normalColor = normalizeAssColor(defaultColor.value, "&H00FFFFFF");
+        const ass = buildAssContent(cues, rules, hitColor, normalColor, fontSize.value);
+        outputAss.textContent = ass;
+        outputCmd.textContent = [
+          "# 1) 先把上方 ASS 内容保存为 subtitle.ass",
+          "ffmpeg -i \"input.mp4\" -vf \"ass=subtitle.ass\" -c:a copy \"output.mp4\"",
+          "",
+          "# 如需兼容性更好（重编码视频）：",
+          "ffmpeg -i \"input.mp4\" -vf \"ass=subtitle.ass\" -c:v libx264 -preset medium -crf 18 -c:a aac -b:a 192k \"output.mp4\""
+        ].join("\\n");
       });
     </script>
   </body>
