@@ -4,6 +4,8 @@ interface Env {
   };
 }
 
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
 const HTML_PAGE = `<!doctype html>
 <html lang="zh-CN">
   <head>
@@ -148,6 +150,7 @@ const HTML_PAGE = `<!doctype html>
       const outputText = document.getElementById("outputText");
       const outputSegments = document.getElementById("outputSegments");
       const fileInfo = document.getElementById("fileInfo");
+      const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
       let selectedFile = null;
 
@@ -168,6 +171,11 @@ const HTML_PAGE = `<!doctype html>
         extractBtn.disabled = !file;
         if (!file) {
           fileInfo.textContent = "尚未选择文件";
+          return;
+        }
+        if (file.size > MAX_UPLOAD_BYTES) {
+          extractBtn.disabled = true;
+          fileInfo.textContent = file.name + " (" + formatBytes(file.size) + ")，文件过大，请控制在 25MB 内";
           return;
         }
         fileInfo.textContent = file.name + " (" + formatBytes(file.size) + ")";
@@ -205,9 +213,35 @@ const HTML_PAGE = `<!doctype html>
 
       function buildHttpErrorHint(status) {
         if (status === 413) return "上传文件太大（HTTP 413）。建议先压缩视频或只上传音频。";
+        if (status === 429) return "请求过于频繁（HTTP 429）。请稍后重试。";
         if (status === 401 || status === 403) return "Cloudflare 鉴权失败（HTTP " + status + "）。请检查 Wrangler 登录/API Token。";
         if (status >= 500) return "服务端错误（HTTP " + status + "），请稍后重试。";
         return "请求失败（HTTP " + status + "）。";
+      }
+
+      function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
+
+      async function fetchWithRetry(url, options, maxAttempts) {
+        let lastResponse = null;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          try {
+            const response = await fetch(url, options);
+            if (response.status === 503 || response.status === 429) {
+              lastResponse = response;
+              if (attempt < maxAttempts) {
+                await sleep(attempt * 1200);
+                continue;
+              }
+            }
+            return response;
+          } catch (error) {
+            if (attempt >= maxAttempts) throw error;
+            await sleep(attempt * 1200);
+          }
+        }
+        return lastResponse;
       }
 
       dropzone.addEventListener("click", () => fileInput.click());
@@ -235,6 +269,13 @@ const HTML_PAGE = `<!doctype html>
 
       extractBtn.addEventListener("click", async () => {
         if (!selectedFile) return;
+        if (selectedFile.size > MAX_UPLOAD_BYTES) {
+          const message = "文件超过 25MB，建议先压缩视频或提取音频后再上传。";
+          outputVtt.innerHTML = '<span class="error">' + message + "</span>";
+          outputText.innerHTML = '<span class="error">' + message + "</span>";
+          outputSegments.innerHTML = '<span class="error">' + message + "</span>";
+          return;
+        }
 
         const formData = new FormData();
         formData.append("file", selectedFile);
@@ -245,10 +286,10 @@ const HTML_PAGE = `<!doctype html>
         extractBtn.disabled = true;
 
         try {
-          const response = await fetch("/api/transcribe", {
+          const response = await fetchWithRetry("/api/transcribe", {
             method: "POST",
             body: formData
-          });
+          }, 3);
 
           const responseContentType = response.headers.get("content-type") || "(unknown)";
           const raw = await response.text();
@@ -335,6 +376,9 @@ export default {
 
       if (!file.type.startsWith("video/") && !file.type.startsWith("audio/")) {
         return json({ error: "仅支持视频或音频文件" }, 400);
+      }
+      if (file.size > MAX_UPLOAD_BYTES) {
+        return json({ error: "文件超过 25MB，建议压缩后重试" }, 413);
       }
 
       const audioBuffer = await file.arrayBuffer();
