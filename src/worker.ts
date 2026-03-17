@@ -375,12 +375,13 @@ I just want a guy who's good-looking and fun."></textarea>
       <div class="field">
         <label for="keywordRules">高亮规则（每行一条）</label>
         <textarea id="keywordRules" placeholder="hot
-003|in shape"></textarea>
+3|in shape"></textarea>
         <div class="hint-line">
           规则说明：<br />
           1) 仅写词（如 hot）= 全局高亮；<br />
-          2) 行号+竖线（如 003|in shape）= 仅第 003 行高亮该词；<br />
-          3) 支持词组，忽略大小写匹配。
+          2) 行号+竖线（如 1|hot、3|in shape）= 按第几条字幕高亮；<br />
+          3) 输入里的 [001] 仅是顺序标记，可有可无，不会写入字幕文本；<br />
+          4) 支持词组，忽略大小写匹配。
         </div>
       </div>
       <div class="mini-grid">
@@ -445,10 +446,12 @@ I just want a guy who's good-looking and fun."></textarea>
         for (const block of blocks) {
           const lines = block.split("\\n").map((line) => line.trimEnd());
           if (lines.length < 2) continue;
-          const match = lines[0].match(/^\\[(\\d+)\\]\\s+(\\d{2}:\\d{2}:\\d{2}\\.\\d{3})\\s*-->\\s*(\\d{2}:\\d{2}:\\d{2}\\.\\d{3})$/);
+          const match = lines[0].match(/^(?:\\[(\\d+)\\]\\s+)?(\\d{2}:\\d{2}:\\d{2}\\.\\d{3})\\s*-->\\s*(\\d{2}:\\d{2}:\\d{2}\\.\\d{3})$/);
           if (!match) continue;
+          const cueNo = cues.length + 1;
           cues.push({
-            index: match[1].padStart(3, "0"),
+            order: cueNo,
+            indexLabel: match[1] ? Number(match[1]) : cueNo,
             start: match[2],
             end: match[3],
             text: lines.slice(1).join("\\n").trim()
@@ -460,7 +463,7 @@ I just want a guy who's good-looking and fun."></textarea>
       function parseRules(input) {
         return input.replace(/\\r\\n/g, "\\n").split("\\n").map((line) => line.trim()).filter(Boolean).map((line) => {
           const withLine = line.match(/^(\\d{1,4})\\s*\\|\\s*(.+)$/);
-          if (withLine) return { line: withLine[1].padStart(3, "0"), word: withLine[2].trim() };
+          if (withLine) return { line: Number(withLine[1]), word: withLine[2].trim() };
           return { line: null, word: line };
         }).filter((rule) => rule.word.length > 0);
       }
@@ -475,9 +478,12 @@ I just want a guy who's good-looking and fun."></textarea>
         return String(hour) + ":" + String(min).padStart(2, "0") + ":" + String(sec).padStart(2, "0") + "." + String(cs).padStart(2, "0");
       }
 
-      function applyHighlight(rawText, cueIndex, rules, hitColor, normalColor) {
+      function applyHighlight(rawText, cueOrder, cueIndexLabel, rules, hitColor, normalColor) {
         const escaped = escapeAssText(rawText);
-        const words = rules.filter((rule) => !rule.line || rule.line === cueIndex).map((rule) => rule.word.trim()).filter(Boolean);
+        const words = rules
+          .filter((rule) => !rule.line || rule.line === cueOrder || rule.line === cueIndexLabel)
+          .map((rule) => rule.word.trim())
+          .filter(Boolean);
         if (words.length === 0) return escaped.replace(/\\n/g, "\\\\N");
         const uniqueWords = [...new Set(words)].sort((a, b) => b.length - a.length);
         let highlighted = escaped;
@@ -507,7 +513,7 @@ I just want a guy who's good-looking and fun."></textarea>
           "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
         ];
         for (const cue of cues) {
-          const text = applyHighlight(cue.text, cue.index, rules, hitColor, normalColor);
+          const text = applyHighlight(cue.text, cue.order, cue.indexLabel, rules, hitColor, normalColor);
           lines.push("Dialogue: 0," + toAssTime(cue.start) + "," + toAssTime(cue.end) + ",Default,,0,0,0,," + text);
         }
         return lines.join("\\n");
@@ -522,7 +528,7 @@ I just want a guy who's good-looking and fun."></textarea>
 
       generateAssBtn.addEventListener("click", () => {
         const cues = parseCueBlocks(subtitleInput.value || "");
-        if (cues.length === 0) return showError("未识别到有效字幕块，请检查输入格式是否为 [001] + 时间轴 + 文本。");
+        if (cues.length === 0) return showError("未识别到有效字幕块，请使用“时间轴 + 文本”格式；[001] 可选，仅作顺序标记。");
         const rules = parseRules(keywordRules.value || "");
         if (rules.length === 0) return showError("请至少填写一个高亮词规则。");
 
