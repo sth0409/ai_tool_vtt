@@ -456,15 +456,18 @@ const ASS_PAGE = `<!doctype html>
       .preview-stage {
         margin-top: 10px;
         position: relative;
+        width: 100%;
+        aspect-ratio: 16 / 9;
         border: 1px solid #334155;
         border-radius: 10px;
-        background: #020617;
+        background: #000;
         overflow: hidden;
       }
       .preview-video {
         width: 100%;
+        height: 100%;
         display: block;
-        max-height: 420px;
+        object-fit: fill;
         background: #000;
       }
       .subtitle-overlay {
@@ -589,6 +592,9 @@ I just want a guy who's good-looking and fun."></textarea>
           </select>
         </div>
         <div class="field">
+          <label for="lockMiddleDrag"><input id="lockMiddleDrag" type="checkbox" /> 锁定中间模式（拖拽时保持中线）</label>
+        </div>
+        <div class="field">
           <label for="subtitleOffset">距边缘（像素）</label>
           <input id="subtitleOffset" type="text" value="40" />
         </div>
@@ -601,7 +607,7 @@ I just want a guy who's good-looking and fun."></textarea>
           <span id="previewFileInfo" class="file-pill">未选择视频（可先调样式）</span>
         </div>
         <input id="previewVideoInput" type="file" accept="video/*" hidden />
-        <div class="preview-stage">
+        <div id="previewStage" class="preview-stage">
           <video id="previewVideo" class="preview-video" controls playsinline></video>
           <div id="subtitleOverlay" class="subtitle-overlay">
             <div id="subtitleOverlayText" class="subtitle-overlay-text">预览区：上传视频后会随时间显示对应字幕</div>
@@ -680,11 +686,13 @@ I just want a guy who's good-looking and fun."></textarea>
       const outlineOpacityValue = document.getElementById("outlineOpacityValue");
       const outlineWidth = document.getElementById("outlineWidth");
       const subtitleAlign = document.getElementById("subtitleAlign");
+      const lockMiddleDrag = document.getElementById("lockMiddleDrag");
       const subtitleOffset = document.getElementById("subtitleOffset");
       const fontSize = document.getElementById("fontSize");
       const pickPreviewVideoBtn = document.getElementById("pickPreviewVideoBtn");
       const previewVideoInput = document.getElementById("previewVideoInput");
       const previewFileInfo = document.getElementById("previewFileInfo");
+      const previewStage = document.getElementById("previewStage");
       const previewVideo = document.getElementById("previewVideo");
       const subtitleOverlay = document.getElementById("subtitleOverlay");
       const subtitleOverlayText = document.getElementById("subtitleOverlayText");
@@ -696,6 +704,7 @@ I just want a guy who's good-looking and fun."></textarea>
       let lastAssContent = "";
       let previewVideoUrl = "";
       let dragState = null;
+      let previewVideoMeta = null;
       let cuesCache = [];
       let highlightConfigs = [
         { id: "cfg-default", name: "默认高亮", color: "&H0000FFFF" }
@@ -1064,9 +1073,13 @@ I just want a guy who's good-looking and fun."></textarea>
         return "flex-end";
       }
 
-      function sanitizeOffset(value) {
+      function sanitizeOffset(value, alignValue) {
         const n = Number(value);
-        if (!Number.isFinite(n) || n < 0) return 40;
+        if (!Number.isFinite(n)) return 40;
+        if (alignValue === "middle") {
+          return Math.max(-300, Math.min(300, Math.round(n)));
+        }
+        if (n < 0) return 40;
         return Math.min(300, Math.round(n));
       }
 
@@ -1080,6 +1093,27 @@ I just want a guy who's good-looking and fun."></textarea>
         const opacity = Math.max(0, Math.min(100, Number(outlineOpacity.value) || 0));
         outlineOpacityValue.textContent = String(Math.round(opacity)) + "%";
         outlineColor.value = setAssColorOpacity(outlineColor.value, opacity);
+      }
+
+      function updatePreviewMetaDisplay(fileName) {
+        if (!previewVideoMeta) {
+          previewFileInfo.textContent = fileName || "未选择视频（可先调样式）";
+          return;
+        }
+        const duration = Number.isFinite(previewVideoMeta.duration)
+          ? Math.round(previewVideoMeta.duration * 10) / 10
+          : 0;
+        previewFileInfo.textContent = (fileName || "已加载视频")
+          + " | " + previewVideoMeta.width + "x" + previewVideoMeta.height
+          + " | " + duration + "s";
+      }
+
+      function updatePreviewStageAspect() {
+        if (!previewVideoMeta || previewVideoMeta.width <= 0 || previewVideoMeta.height <= 0) {
+          previewStage.style.aspectRatio = "16 / 9";
+          return;
+        }
+        previewStage.style.aspectRatio = String(previewVideoMeta.width) + " / " + String(previewVideoMeta.height);
       }
 
       function buildPreviewCueHtml(rawText, cueOrder) {
@@ -1120,11 +1154,12 @@ I just want a guy who's good-looking and fun."></textarea>
         const sizeNum = Number(fontSize.value);
         const safeSize = Number.isFinite(sizeNum) && sizeNum > 0 ? Math.round(sizeNum) : 48;
         const align = String(subtitleAlign.value || "bottom");
-        const offset = sanitizeOffset(subtitleOffset.value);
+        const offset = sanitizeOffset(subtitleOffset.value, align);
 
         subtitleOverlay.style.justifyContent = getOverlayJustify(align);
         subtitleOverlay.style.paddingTop = align === "top" ? String(offset) + "px" : "0";
         subtitleOverlay.style.paddingBottom = align === "bottom" ? String(offset) + "px" : "0";
+        subtitleOverlayText.style.transform = align === "middle" ? "translateY(" + String(offset) + "px)" : "translateY(0)";
         subtitleOverlayText.style.fontSize = String(safeSize) + "px";
         subtitleOverlayText.style.color = assColorToCssHex(normal);
         subtitleOverlayText.style.background = assColorToCssRgba(back, "rgba(0,0,0,0.82)");
@@ -1154,14 +1189,17 @@ I just want a guy who's good-looking and fun."></textarea>
         const half = Math.max(10, textRect.height / 2);
         const yInStage = clientY - stageRect.top;
         const clampedY = Math.max(half, Math.min(stageRect.height - half, yInStage));
-        const align = clampedY < stageRect.height / 2 ? "top" : "bottom";
+        const forceMiddle = !!lockMiddleDrag.checked;
+        const align = forceMiddle ? "middle" : (clampedY < stageRect.height / 2 ? "top" : "bottom");
         let offset = 0;
-        if (align === "top") {
+        if (align === "middle") {
+          offset = Math.round(clampedY - stageRect.height / 2);
+        } else if (align === "top") {
           offset = Math.round(clampedY - half);
         } else {
           offset = Math.round(stageRect.height - (clampedY + half));
         }
-        offset = sanitizeOffset(offset);
+        offset = sanitizeOffset(offset, align);
         subtitleAlign.value = align;
         subtitleOffset.value = String(offset);
         updatePreviewOverlay();
@@ -1169,6 +1207,9 @@ I just want a guy who's good-looking and fun."></textarea>
 
       function onSubtitlePointerMove(event) {
         if (!dragState) return;
+        const deltaY = Math.abs(event.clientY - dragState.startY);
+        if (!dragState.moved && deltaY < 3) return;
+        dragState.moved = true;
         handleSubtitleDragMove(event.clientY);
       }
 
@@ -1181,13 +1222,21 @@ I just want a guy who's good-looking and fun."></textarea>
         window.removeEventListener("pointercancel", endSubtitleDrag);
       }
 
+      function getMiddlePosY(offsetValue) {
+        const stageHeight = Math.max(1, subtitleOverlay.clientHeight || 1080);
+        const offset = sanitizeOffset(offsetValue, "middle");
+        const y = 540 + Math.round(offset * (1080 / stageHeight));
+        return Math.max(0, Math.min(1080, y));
+      }
+
       function buildAssContent(cues, normalColor, borderColor, borderWidthValue, fontSizeValue, alignValue, offsetValue) {
         const sizeNum = Number(fontSizeValue);
         const safeSize = Number.isFinite(sizeNum) && sizeNum > 0 ? Math.round(sizeNum) : 48;
         const borderNum = Number(borderWidthValue);
         const safeBorder = Number.isFinite(borderNum) && borderNum >= 0 ? Math.min(12, Math.round(borderNum)) : 2;
         const alignCode = getAlignmentCode(String(alignValue || "bottom"));
-        const safeOffset = sanitizeOffset(offsetValue);
+        const safeOffset = sanitizeOffset(offsetValue, String(alignValue || "bottom"));
+        const middlePosY = alignCode === 5 ? getMiddlePosY(offsetValue) : null;
         const lines = [
           "[Script Info]",
           "ScriptType: v4.00+",
@@ -1203,7 +1252,8 @@ I just want a guy who's good-looking and fun."></textarea>
         ];
         for (const cue of cues) {
           const text = applyMultiHighlight(cue.text, cue.order, normalColor);
-          lines.push("Dialogue: 0," + toAssTime(cue.start) + "," + toAssTime(cue.end) + ",Default,,0,0,0,," + text);
+          const decorated = alignCode === 5 ? "{\\\\an5\\\\pos(960," + String(middlePosY) + ")}" + text : text;
+          lines.push("Dialogue: 0," + toAssTime(cue.start) + "," + toAssTime(cue.end) + ",Default,,0,0,0,," + decorated);
         }
         return lines.join("\\n");
       }
@@ -1333,8 +1383,21 @@ I just want a guy who's good-looking and fun."></textarea>
         if (previewVideoUrl) URL.revokeObjectURL(previewVideoUrl);
         previewVideoUrl = URL.createObjectURL(file);
         previewVideo.src = previewVideoUrl;
-        previewFileInfo.textContent = file.name;
+        previewVideoMeta = null;
+        updatePreviewMetaDisplay(file.name);
+        previewVideo.dataset.fileName = file.name;
         previewVideo.load();
+        updatePreviewOverlayAndText();
+      });
+
+      previewVideo.addEventListener("loadedmetadata", () => {
+        previewVideoMeta = {
+          width: previewVideo.videoWidth || 0,
+          height: previewVideo.videoHeight || 0,
+          duration: previewVideo.duration || 0
+        };
+        updatePreviewStageAspect();
+        updatePreviewMetaDisplay(previewVideo.dataset.fileName || "");
         updatePreviewOverlayAndText();
       });
 
@@ -1355,15 +1418,18 @@ I just want a guy who's good-looking and fun."></textarea>
       fontSize.addEventListener("input", updatePreviewOverlayAndText);
       subtitleAlign.addEventListener("change", updatePreviewOverlayAndText);
       subtitleOffset.addEventListener("input", updatePreviewOverlayAndText);
+      lockMiddleDrag.addEventListener("change", () => {
+        if (lockMiddleDrag.checked) subtitleAlign.value = "middle";
+        updatePreviewOverlayAndText();
+      });
       subtitleOverlayText.addEventListener("pointerdown", (event) => {
         if (event.button !== 0) return;
         event.preventDefault();
-        dragState = { startY: event.clientY };
+        dragState = { startY: event.clientY, moved: false };
         subtitleOverlayText.classList.add("dragging");
         window.addEventListener("pointermove", onSubtitlePointerMove);
         window.addEventListener("pointerup", endSubtitleDrag);
         window.addEventListener("pointercancel", endSubtitleDrag);
-        handleSubtitleDragMove(event.clientY);
       });
 
       generateAssBtn.addEventListener("click", () => {
@@ -1402,6 +1468,7 @@ I just want a guy who's good-looking and fun."></textarea>
       renderConfigList();
       renderGroupedHighlights();
       syncOpacitySliderFromOutlineColor();
+      updatePreviewStageAspect();
       updatePreviewOverlayAndText();
     </script>
   </body>
