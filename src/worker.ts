@@ -313,7 +313,7 @@ const ASS_PAGE = `<!doctype html>
       .back-link { color: #93c5fd; text-decoration: none; }
       .field { margin-top: 14px; }
       .field label { display: block; margin-bottom: 6px; color: #cbd5e1; font-size: 14px; }
-      textarea, input[type="text"], input[type="color"] {
+      textarea, input[type="text"], input[type="color"], select {
         width: 100%;
         border: 1px solid #334155;
         border-radius: 10px;
@@ -438,6 +438,61 @@ const ASS_PAGE = `<!doctype html>
       }
       .menu-empty { margin: 0; color: #94a3b8; font-size: 12px; }
       .mini-grid { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+      .preview-toolbar {
+        margin-top: 10px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .file-pill {
+        border: 1px solid #334155;
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 12px;
+        color: #cbd5e1;
+        background: #020617;
+      }
+      .preview-stage {
+        margin-top: 10px;
+        position: relative;
+        border: 1px solid #334155;
+        border-radius: 10px;
+        background: #020617;
+        overflow: hidden;
+      }
+      .preview-video {
+        width: 100%;
+        display: block;
+        max-height: 420px;
+        background: #000;
+      }
+      .subtitle-overlay {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        padding: 0 16px 40px;
+      }
+      .subtitle-overlay-text {
+        max-width: min(92%, 1100px);
+        border-radius: 6px;
+        padding: 4px 12px;
+        font-size: 40px;
+        line-height: 1.32;
+        color: #ffffff;
+        background: rgba(0, 0, 0, 0.82);
+        text-align: center;
+        white-space: pre-wrap;
+        word-break: break-word;
+        pointer-events: auto;
+        cursor: grab;
+        user-select: none;
+      }
+      .subtitle-overlay-text.dragging { cursor: grabbing; }
+      .subtitle-hit { font-weight: 700; }
       pre { margin: 0; white-space: pre-wrap; word-break: break-word; line-height: 1.45; }
       .error { color: #fca5a5; }
       .modal {
@@ -518,9 +573,41 @@ I just want a guy who's good-looking and fun."></textarea>
           <input id="outlineColor" type="text" value="&H00000000" />
         </div>
         <div class="field">
+          <label for="outlineOpacity">黑框透明度（0-100） <span id="outlineOpacityValue">100%</span></label>
+          <input id="outlineOpacity" type="range" min="0" max="100" step="1" value="100" />
+        </div>
+        <div class="field">
           <label for="outlineWidth">黑框厚度</label>
           <input id="outlineWidth" type="text" value="2" />
         </div>
+        <div class="field">
+          <label for="subtitleAlign">垂直对齐</label>
+          <select id="subtitleAlign">
+            <option value="bottom" selected>底部</option>
+            <option value="middle">中间</option>
+            <option value="top">顶部</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="subtitleOffset">距边缘（像素）</label>
+          <input id="subtitleOffset" type="text" value="40" />
+        </div>
+      </div>
+
+      <div class="field">
+        <label>视频预览调参</label>
+        <div class="preview-toolbar">
+          <button id="pickPreviewVideoBtn" type="button" class="subtle-btn">上传预览视频</button>
+          <span id="previewFileInfo" class="file-pill">未选择视频（可先调样式）</span>
+        </div>
+        <input id="previewVideoInput" type="file" accept="video/*" hidden />
+        <div class="preview-stage">
+          <video id="previewVideo" class="preview-video" controls playsinline></video>
+          <div id="subtitleOverlay" class="subtitle-overlay">
+            <div id="subtitleOverlayText" class="subtitle-overlay-text">预览区：上传视频后会随时间显示对应字幕</div>
+          </div>
+        </div>
+        <div class="hint-line">可视化调整字号、黑框和位置；可直接拖拽预览字幕上下移动；生成 ASS 时会使用同一组参数。</div>
       </div>
 
       <div class="actions-row">
@@ -589,14 +676,26 @@ I just want a guy who's good-looking and fun."></textarea>
 
       const defaultColor = document.getElementById("defaultColor");
       const outlineColor = document.getElementById("outlineColor");
+      const outlineOpacity = document.getElementById("outlineOpacity");
+      const outlineOpacityValue = document.getElementById("outlineOpacityValue");
       const outlineWidth = document.getElementById("outlineWidth");
+      const subtitleAlign = document.getElementById("subtitleAlign");
+      const subtitleOffset = document.getElementById("subtitleOffset");
       const fontSize = document.getElementById("fontSize");
+      const pickPreviewVideoBtn = document.getElementById("pickPreviewVideoBtn");
+      const previewVideoInput = document.getElementById("previewVideoInput");
+      const previewFileInfo = document.getElementById("previewFileInfo");
+      const previewVideo = document.getElementById("previewVideo");
+      const subtitleOverlay = document.getElementById("subtitleOverlay");
+      const subtitleOverlayText = document.getElementById("subtitleOverlayText");
       const generateAssBtn = document.getElementById("generateAssBtn");
       const downloadAssBtn = document.getElementById("downloadAssBtn");
       const outputAss = document.getElementById("outputAss");
       const outputCmd = document.getElementById("outputCmd");
 
       let lastAssContent = "";
+      let previewVideoUrl = "";
+      let dragState = null;
       let cuesCache = [];
       let highlightConfigs = [
         { id: "cfg-default", name: "默认高亮", color: "&H0000FFFF" }
@@ -631,6 +730,12 @@ I just want a guy who's good-looking and fun."></textarea>
         return String(value || "").replace(/\\s+/g, " ").trim().toLowerCase();
       }
 
+      function parseTimeToSeconds(timeWithMs) {
+        const m = String(timeWithMs || "").match(/^(\\d{2}):(\\d{2}):(\\d{2})\\.(\\d{3})$/);
+        if (!m) return 0;
+        return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(m[4]) / 1000;
+      }
+
       function parseCueBlocks(input) {
         const blocks = input.replace(/\\r\\n/g, "\\n").trim().split(/\\n{2,}/).map((block) => block.trim()).filter(Boolean);
         const cues = [];
@@ -640,11 +745,15 @@ I just want a guy who's good-looking and fun."></textarea>
           const match = lines[0].match(/^(?:\\[(\\d+)\\]\\s+)?(\\d{2}:\\d{2}:\\d{2}\\.\\d{3})\\s*-->\\s*(\\d{2}:\\d{2}:\\d{2}\\.\\d{3})$/);
           if (!match) continue;
           const cueNo = cues.length + 1;
+          const startSec = parseTimeToSeconds(match[2]);
+          const endSec = parseTimeToSeconds(match[3]);
           cues.push({
             order: cueNo,
             indexLabel: match[1] ? Number(match[1]) : cueNo,
             start: match[2],
             end: match[3],
+            startSec,
+            endSec,
             text: lines.slice(1).join("\\n").trim()
           });
         }
@@ -658,6 +767,37 @@ I just want a guy who's good-looking and fun."></textarea>
         const gg = raw.slice(4, 6);
         const rr = raw.slice(6, 8);
         return "#" + rr + gg + bb;
+      }
+
+      function assColorToCssRgba(assColor, fallback) {
+        const value = normalizeAssColor(assColor, "");
+        if (!value) return fallback;
+        const raw = value.slice(2);
+        if (raw.length !== 8) return fallback;
+        const aa = raw.slice(0, 2);
+        const bb = raw.slice(2, 4);
+        const gg = raw.slice(4, 6);
+        const rr = raw.slice(6, 8);
+        const alpha = 1 - (parseInt(aa, 16) / 255);
+        return "rgba(" + parseInt(rr, 16) + "," + parseInt(gg, 16) + "," + parseInt(bb, 16) + "," + alpha.toFixed(3) + ")";
+      }
+
+      function setAssColorOpacity(assColor, opacityPercent) {
+        const value = normalizeAssColor(assColor, "&H00000000");
+        const raw = value.slice(2);
+        const rgb = raw.slice(2);
+        const safeOpacity = Math.max(0, Math.min(100, Math.round(Number(opacityPercent) || 0)));
+        const alpha = Math.round((100 - safeOpacity) * 255 / 100);
+        const aa = alpha.toString(16).toUpperCase().padStart(2, "0");
+        return "&H" + aa + rgb;
+      }
+
+      function getAssColorOpacity(assColor) {
+        const value = normalizeAssColor(assColor, "&H00000000");
+        const aa = value.slice(2, 4);
+        const alpha = parseInt(aa, 16);
+        const opacity = 100 - Math.round(alpha * 100 / 255);
+        return Math.max(0, Math.min(100, opacity));
       }
 
       function cssHexToAssColor(hex) {
@@ -853,6 +993,7 @@ I just want a guy who's good-looking and fun."></textarea>
         }
         renderPreprocess();
         renderGroupedHighlights();
+        refreshPreviewText();
         hideWordMenu();
         clearBrowserSelection();
       }
@@ -862,6 +1003,7 @@ I just want a guy who's good-looking and fun."></textarea>
         assignments = assignments.filter((item) => !(item.cueOrder === selectedContext.cueOrder && item.norm === selectedContext.norm));
         renderPreprocess();
         renderGroupedHighlights();
+        refreshPreviewText();
         hideWordMenu();
         clearBrowserSelection();
       }
@@ -910,11 +1052,142 @@ I just want a guy who's good-looking and fun."></textarea>
         return parts.join("").replace(/\\n/g, "\\\\N");
       }
 
-      function buildAssContent(cues, normalColor, borderColor, borderWidthValue, fontSizeValue) {
+      function getAlignmentCode(value) {
+        if (value === "top") return 8;
+        if (value === "middle") return 5;
+        return 2;
+      }
+
+      function getOverlayJustify(value) {
+        if (value === "top") return "flex-start";
+        if (value === "middle") return "center";
+        return "flex-end";
+      }
+
+      function sanitizeOffset(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n) || n < 0) return 40;
+        return Math.min(300, Math.round(n));
+      }
+
+      function syncOpacitySliderFromOutlineColor() {
+        const opacity = getAssColorOpacity(outlineColor.value);
+        outlineOpacity.value = String(opacity);
+        outlineOpacityValue.textContent = String(opacity) + "%";
+      }
+
+      function applyOpacitySliderToOutlineColor() {
+        const opacity = Math.max(0, Math.min(100, Number(outlineOpacity.value) || 0));
+        outlineOpacityValue.textContent = String(Math.round(opacity)) + "%";
+        outlineColor.value = setAssColorOpacity(outlineColor.value, opacity);
+      }
+
+      function buildPreviewCueHtml(rawText, cueOrder) {
+        const cueEntries = assignments
+          .filter((item) => item.cueOrder === cueOrder)
+          .map((item) => {
+            const cfg = getConfigById(item.configId);
+            if (!cfg) return null;
+            return { word: item.word, color: cfg.color };
+          })
+          .filter(Boolean);
+        const matches = collectMatches(rawText, cueEntries);
+        if (matches.length === 0) return escapeHtml(rawText).replace(/\\n/g, "<br />");
+
+        let cursor = 0;
+        const parts = [];
+        for (const match of matches) {
+          parts.push(escapeHtml(rawText.slice(cursor, match.start)));
+          parts.push('<span class="subtitle-hit" style="color:' + assColorToCssHex(match.color) + ';">' + escapeHtml(rawText.slice(match.start, match.end)) + "</span>");
+          cursor = match.end;
+        }
+        parts.push(escapeHtml(rawText.slice(cursor)));
+        return parts.join("").replace(/\\n/g, "<br />");
+      }
+
+      function getCueAtTime(cues, currentTimeSec) {
+        for (const cue of cues) {
+          if (currentTimeSec >= cue.startSec && currentTimeSec <= cue.endSec + 0.04) return cue;
+        }
+        return null;
+      }
+
+      function updatePreviewOverlay() {
+        const normal = normalizeAssColor(defaultColor.value, "&H00FFFFFF");
+        const back = normalizeAssColor(outlineColor.value, "&H00000000");
+        const borderNum = Number(outlineWidth.value);
+        const safeBorder = Number.isFinite(borderNum) && borderNum >= 0 ? Math.min(12, Math.round(borderNum)) : 2;
+        const sizeNum = Number(fontSize.value);
+        const safeSize = Number.isFinite(sizeNum) && sizeNum > 0 ? Math.round(sizeNum) : 48;
+        const align = String(subtitleAlign.value || "bottom");
+        const offset = sanitizeOffset(subtitleOffset.value);
+
+        subtitleOverlay.style.justifyContent = getOverlayJustify(align);
+        subtitleOverlay.style.paddingTop = align === "top" ? String(offset) + "px" : "0";
+        subtitleOverlay.style.paddingBottom = align === "bottom" ? String(offset) + "px" : "0";
+        subtitleOverlayText.style.fontSize = String(safeSize) + "px";
+        subtitleOverlayText.style.color = assColorToCssHex(normal);
+        subtitleOverlayText.style.background = assColorToCssRgba(back, "rgba(0,0,0,0.82)");
+        subtitleOverlayText.style.padding = String(Math.max(2, safeBorder * 2)) + "px " + String(Math.max(8, safeBorder * 4)) + "px";
+      }
+
+      function refreshPreviewText() {
+        const cues = parseCueBlocks(subtitleInput.value || "");
+        if (cues.length === 0) {
+          subtitleOverlayText.textContent = "预览区：请先输入有效字幕分段";
+          return;
+        }
+        const current = previewVideo && Number.isFinite(previewVideo.currentTime) ? previewVideo.currentTime : 0;
+        const cue = getCueAtTime(cues, current) || cues[0];
+        subtitleOverlayText.innerHTML = buildPreviewCueHtml(cue.text, cue.order);
+      }
+
+      function updatePreviewOverlayAndText() {
+        updatePreviewOverlay();
+        refreshPreviewText();
+      }
+
+      function handleSubtitleDragMove(clientY) {
+        const stageRect = subtitleOverlay.getBoundingClientRect();
+        if (stageRect.height <= 0) return;
+        const textRect = subtitleOverlayText.getBoundingClientRect();
+        const half = Math.max(10, textRect.height / 2);
+        const yInStage = clientY - stageRect.top;
+        const clampedY = Math.max(half, Math.min(stageRect.height - half, yInStage));
+        const align = clampedY < stageRect.height / 2 ? "top" : "bottom";
+        let offset = 0;
+        if (align === "top") {
+          offset = Math.round(clampedY - half);
+        } else {
+          offset = Math.round(stageRect.height - (clampedY + half));
+        }
+        offset = sanitizeOffset(offset);
+        subtitleAlign.value = align;
+        subtitleOffset.value = String(offset);
+        updatePreviewOverlay();
+      }
+
+      function onSubtitlePointerMove(event) {
+        if (!dragState) return;
+        handleSubtitleDragMove(event.clientY);
+      }
+
+      function endSubtitleDrag() {
+        if (!dragState) return;
+        dragState = null;
+        subtitleOverlayText.classList.remove("dragging");
+        window.removeEventListener("pointermove", onSubtitlePointerMove);
+        window.removeEventListener("pointerup", endSubtitleDrag);
+        window.removeEventListener("pointercancel", endSubtitleDrag);
+      }
+
+      function buildAssContent(cues, normalColor, borderColor, borderWidthValue, fontSizeValue, alignValue, offsetValue) {
         const sizeNum = Number(fontSizeValue);
         const safeSize = Number.isFinite(sizeNum) && sizeNum > 0 ? Math.round(sizeNum) : 48;
         const borderNum = Number(borderWidthValue);
         const safeBorder = Number.isFinite(borderNum) && borderNum >= 0 ? Math.min(12, Math.round(borderNum)) : 2;
+        const alignCode = getAlignmentCode(String(alignValue || "bottom"));
+        const safeOffset = sanitizeOffset(offsetValue);
         const lines = [
           "[Script Info]",
           "ScriptType: v4.00+",
@@ -923,7 +1196,7 @@ I just want a guy who's good-looking and fun."></textarea>
           "",
           "[V4+ Styles]",
           "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-          "Style: Default,Arial," + safeSize + "," + normalColor + ",&H000000FF,&H00000000," + borderColor + ",-1,0,0,0,100,100,0,0,3," + safeBorder + ",0,2,10,10,40,1",
+          "Style: Default,Arial," + safeSize + "," + normalColor + ",&H000000FF,&H00000000," + borderColor + ",-1,0,0,0,100,100,0,0,3," + safeBorder + ",0," + alignCode + ",10,10," + safeOffset + ",1",
           "",
           "[Events]",
           "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
@@ -948,12 +1221,14 @@ I just want a guy who's good-looking and fun."></textarea>
           preprocessBody.innerHTML = '<p class="preprocess-placeholder">未识别到有效字幕块，请确认格式为“时间轴 + 文本”。</p>';
           assignments = [];
           renderGroupedHighlights();
+          refreshPreviewText();
           hideWordMenu();
           return;
         }
         pruneAssignmentsByCues();
         renderPreprocess();
         renderGroupedHighlights();
+        refreshPreviewText();
       });
 
       preprocessBody.addEventListener("mouseup", () => {
@@ -1047,6 +1322,50 @@ I just want a guy who's good-looking and fun."></textarea>
         if (event.target === configModal) configModal.hidden = true;
       });
 
+      pickPreviewVideoBtn.addEventListener("click", () => {
+        previewVideoInput.value = "";
+        previewVideoInput.click();
+      });
+
+      previewVideoInput.addEventListener("change", (event) => {
+        const file = event.target?.files?.[0];
+        if (!file) return;
+        if (previewVideoUrl) URL.revokeObjectURL(previewVideoUrl);
+        previewVideoUrl = URL.createObjectURL(file);
+        previewVideo.src = previewVideoUrl;
+        previewFileInfo.textContent = file.name;
+        previewVideo.load();
+        updatePreviewOverlayAndText();
+      });
+
+      previewVideo.addEventListener("timeupdate", refreshPreviewText);
+      previewVideo.addEventListener("seeked", refreshPreviewText);
+
+      subtitleInput.addEventListener("input", refreshPreviewText);
+      defaultColor.addEventListener("input", updatePreviewOverlayAndText);
+      outlineColor.addEventListener("input", () => {
+        syncOpacitySliderFromOutlineColor();
+        updatePreviewOverlayAndText();
+      });
+      outlineOpacity.addEventListener("input", () => {
+        applyOpacitySliderToOutlineColor();
+        updatePreviewOverlayAndText();
+      });
+      outlineWidth.addEventListener("input", updatePreviewOverlayAndText);
+      fontSize.addEventListener("input", updatePreviewOverlayAndText);
+      subtitleAlign.addEventListener("change", updatePreviewOverlayAndText);
+      subtitleOffset.addEventListener("input", updatePreviewOverlayAndText);
+      subtitleOverlayText.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        dragState = { startY: event.clientY };
+        subtitleOverlayText.classList.add("dragging");
+        window.addEventListener("pointermove", onSubtitlePointerMove);
+        window.addEventListener("pointerup", endSubtitleDrag);
+        window.addEventListener("pointercancel", endSubtitleDrag);
+        handleSubtitleDragMove(event.clientY);
+      });
+
       generateAssBtn.addEventListener("click", () => {
         const cues = parseCueBlocks(subtitleInput.value || "");
         if (cues.length === 0) return showError("未识别到有效字幕块，请使用“时间轴 + 文本”格式；[001] 可选，仅作顺序标记。");
@@ -1054,7 +1373,7 @@ I just want a guy who's good-looking and fun."></textarea>
 
         const normalColor = normalizeAssColor(defaultColor.value, "&H00FFFFFF");
         const borderColor = normalizeAssColor(outlineColor.value, "&H00000000");
-        const ass = buildAssContent(cues, normalColor, borderColor, outlineWidth.value, fontSize.value);
+        const ass = buildAssContent(cues, normalColor, borderColor, outlineWidth.value, fontSize.value, subtitleAlign.value, subtitleOffset.value);
         lastAssContent = ass;
         outputAss.textContent = ass;
         outputCmd.textContent = [
@@ -1082,6 +1401,8 @@ I just want a guy who's good-looking and fun."></textarea>
 
       renderConfigList();
       renderGroupedHighlights();
+      syncOpacitySliderFromOutlineColor();
+      updatePreviewOverlayAndText();
     </script>
   </body>
 </html>`;
