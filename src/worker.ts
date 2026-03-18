@@ -484,7 +484,7 @@ const ASS_PAGE = `<!doctype html>
         padding: 0 16px 40px;
       }
       .subtitle-overlay-text {
-        max-width: min(92%, 1100px);
+        max-width: calc(100% - 20px);
         border-radius: 6px;
         padding: 4px 12px;
         font-size: 40px;
