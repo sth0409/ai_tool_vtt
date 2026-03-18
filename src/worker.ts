@@ -457,6 +457,9 @@ const ASS_PAGE = `<!doctype html>
         margin-top: 10px;
         position: relative;
         width: 100%;
+        max-width: 760px;
+        margin-left: auto;
+        margin-right: auto;
         aspect-ratio: 16 / 9;
         border: 1px solid #334155;
         border-radius: 10px;
@@ -585,18 +588,7 @@ I just want a guy who's good-looking and fun."></textarea>
           <input id="outlineWidth" type="text" value="2" />
         </div>
         <div class="field">
-          <label for="subtitleAlign">垂直对齐</label>
-          <select id="subtitleAlign">
-            <option value="bottom" selected>底部</option>
-            <option value="middle">中间</option>
-            <option value="top">顶部</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="lockMiddleDrag"><input id="lockMiddleDrag" type="checkbox" /> 锁定中间模式（拖拽时保持中线）</label>
-        </div>
-        <div class="field">
-          <label for="subtitleOffset">距边缘（像素）</label>
+          <label for="subtitleOffset">Y 轴位置（距底部像素）</label>
           <input id="subtitleOffset" type="text" value="40" />
         </div>
       </div>
@@ -686,8 +678,6 @@ I just want a guy who's good-looking and fun."></textarea>
       const outlineOpacity = document.getElementById("outlineOpacity");
       const outlineOpacityValue = document.getElementById("outlineOpacityValue");
       const outlineWidth = document.getElementById("outlineWidth");
-      const subtitleAlign = document.getElementById("subtitleAlign");
-      const lockMiddleDrag = document.getElementById("lockMiddleDrag");
       const subtitleOffset = document.getElementById("subtitleOffset");
       const fontSize = document.getElementById("fontSize");
       const pickPreviewVideoBtn = document.getElementById("pickPreviewVideoBtn");
@@ -1062,24 +1052,9 @@ I just want a guy who's good-looking and fun."></textarea>
         return parts.join("").replace(/\\n/g, "\\\\N");
       }
 
-      function getAlignmentCode(value) {
-        if (value === "top") return 8;
-        if (value === "middle") return 5;
-        return 2;
-      }
-
-      function getOverlayJustify(value) {
-        if (value === "top") return "flex-start";
-        if (value === "middle") return "center";
-        return "flex-end";
-      }
-
-      function sanitizeOffset(value, alignValue) {
+      function sanitizeOffset(value) {
         const n = Number(value);
         if (!Number.isFinite(n)) return 40;
-        if (alignValue === "middle") {
-          return Math.max(-300, Math.min(300, Math.round(n)));
-        }
         if (n < 0) return 40;
         return Math.min(300, Math.round(n));
       }
@@ -1154,13 +1129,12 @@ I just want a guy who's good-looking and fun."></textarea>
         const safeBorder = Number.isFinite(borderNum) && borderNum >= 0 ? Math.min(12, Math.round(borderNum)) : 2;
         const sizeNum = Number(fontSize.value);
         const safeSize = Number.isFinite(sizeNum) && sizeNum > 0 ? Math.round(sizeNum) : 48;
-        const align = String(subtitleAlign.value || "bottom");
-        const offset = sanitizeOffset(subtitleOffset.value, align);
+        const offset = sanitizeOffset(subtitleOffset.value);
 
-        subtitleOverlay.style.justifyContent = getOverlayJustify(align);
-        subtitleOverlay.style.paddingTop = align === "top" ? String(offset) + "px" : "0";
-        subtitleOverlay.style.paddingBottom = align === "bottom" ? String(offset) + "px" : "0";
-        subtitleOverlayText.style.transform = align === "middle" ? "translateY(" + String(offset) + "px)" : "translateY(0)";
+        subtitleOverlay.style.justifyContent = "flex-end";
+        subtitleOverlay.style.paddingTop = "0";
+        subtitleOverlay.style.paddingBottom = String(offset) + "px";
+        subtitleOverlayText.style.transform = "translateY(0)";
         subtitleOverlayText.style.fontSize = String(safeSize) + "px";
         subtitleOverlayText.style.color = assColorToCssHex(normal);
         subtitleOverlayText.style.background = assColorToCssRgba(back, "rgba(0,0,0,0.82)");
@@ -1190,18 +1164,8 @@ I just want a guy who's good-looking and fun."></textarea>
         const half = Math.max(10, textRect.height / 2);
         const yInStage = clientY - stageRect.top;
         const clampedY = Math.max(half, Math.min(stageRect.height - half, yInStage));
-        const forceMiddle = !!lockMiddleDrag.checked;
-        const align = forceMiddle ? "middle" : (clampedY < stageRect.height / 2 ? "top" : "bottom");
-        let offset = 0;
-        if (align === "middle") {
-          offset = Math.round(clampedY - stageRect.height / 2);
-        } else if (align === "top") {
-          offset = Math.round(clampedY - half);
-        } else {
-          offset = Math.round(stageRect.height - (clampedY + half));
-        }
-        offset = sanitizeOffset(offset, align);
-        subtitleAlign.value = align;
+        let offset = Math.round(stageRect.height - (clampedY + half));
+        offset = sanitizeOffset(offset);
         subtitleOffset.value = String(offset);
         updatePreviewOverlay();
       }
@@ -1223,24 +1187,20 @@ I just want a guy who's good-looking and fun."></textarea>
         window.removeEventListener("pointercancel", endSubtitleDrag);
       }
 
-      function getExportPosY(alignValue, offsetValue) {
+      function getExportPosY(offsetValue) {
         const stageHeight = Math.max(1, subtitleOverlay.clientHeight || 1080);
-        const align = String(alignValue || "bottom");
-        const offset = sanitizeOffset(offsetValue, align);
+        const offset = sanitizeOffset(offsetValue);
         const scaled = Math.round(offset * (1080 / stageHeight));
-        if (align === "top") return Math.max(0, Math.min(1080, scaled));
-        if (align === "middle") return Math.max(0, Math.min(1080, 540 + scaled));
         return Math.max(0, Math.min(1080, 1080 - scaled));
       }
 
-      function buildAssContent(cues, normalColor, borderColor, borderWidthValue, fontSizeValue, alignValue, offsetValue) {
+      function buildAssContent(cues, normalColor, borderColor, borderWidthValue, fontSizeValue, offsetValue) {
         const sizeNum = Number(fontSizeValue);
         const safeSize = Number.isFinite(sizeNum) && sizeNum > 0 ? Math.round(sizeNum) : 48;
         const borderNum = Number(borderWidthValue);
         const safeBorder = Number.isFinite(borderNum) && borderNum >= 0 ? Math.min(12, Math.round(borderNum)) : 2;
-        const align = String(alignValue || "bottom");
-        const alignCode = getAlignmentCode(align);
-        const exportY = getExportPosY(align, offsetValue);
+        const alignCode = 2;
+        const exportY = getExportPosY(offsetValue);
         const lines = [
           "[Script Info]",
           "ScriptType: v4.00+",
@@ -1420,12 +1380,7 @@ I just want a guy who's good-looking and fun."></textarea>
       });
       outlineWidth.addEventListener("input", updatePreviewOverlayAndText);
       fontSize.addEventListener("input", updatePreviewOverlayAndText);
-      subtitleAlign.addEventListener("change", updatePreviewOverlayAndText);
       subtitleOffset.addEventListener("input", updatePreviewOverlayAndText);
-      lockMiddleDrag.addEventListener("change", () => {
-        if (lockMiddleDrag.checked) subtitleAlign.value = "middle";
-        updatePreviewOverlayAndText();
-      });
       subtitleOverlayText.addEventListener("pointerdown", (event) => {
         if (event.button !== 0) return;
         event.preventDefault();
@@ -1443,7 +1398,7 @@ I just want a guy who's good-looking and fun."></textarea>
 
         const normalColor = normalizeAssColor(defaultColor.value, "&H00FFFFFF");
         const borderColor = normalizeAssColor(outlineColor.value, "&H00000000");
-        const ass = buildAssContent(cues, normalColor, borderColor, outlineWidth.value, fontSize.value, subtitleAlign.value, subtitleOffset.value);
+        const ass = buildAssContent(cues, normalColor, borderColor, outlineWidth.value, fontSize.value, subtitleOffset.value);
         lastAssContent = ass;
         outputAss.textContent = ass;
         outputCmd.textContent = [
