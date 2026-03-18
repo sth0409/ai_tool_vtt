@@ -309,11 +309,11 @@ const ASS_PAGE = `<!doctype html>
         background: #0f172a;
         color: #e2e8f0;
       }
-      .container { max-width: 980px; margin: 24px auto; padding: 16px; }
+      .container { max-width: 1080px; margin: 24px auto; padding: 16px; }
       .back-link { color: #93c5fd; text-decoration: none; }
       .field { margin-top: 14px; }
       .field label { display: block; margin-bottom: 6px; color: #cbd5e1; font-size: 14px; }
-      textarea, input[type="text"] {
+      textarea, input[type="text"], input[type="color"] {
         width: 100%;
         border: 1px solid #334155;
         border-radius: 10px;
@@ -325,14 +325,11 @@ const ASS_PAGE = `<!doctype html>
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       }
       textarea { min-height: 180px; resize: vertical; }
-      .mini-grid { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
-      .hint-line { margin-top: 8px; color: #94a3b8; font-size: 12px; line-height: 1.45; }
-      .actions-row { margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap; }
       button {
         border: 0;
         border-radius: 10px;
-        padding: 12px 24px;
-        font-size: 15px;
+        padding: 10px 16px;
+        font-size: 14px;
         font-weight: 600;
         background: #2563eb;
         color: #f8fafc;
@@ -340,6 +337,8 @@ const ASS_PAGE = `<!doctype html>
       }
       .subtle-btn { background: #475569; }
       button:disabled { background: #334155; cursor: not-allowed; opacity: 0.7; }
+      .actions-row { margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      .hint-line { margin-top: 8px; color: #94a3b8; font-size: 12px; line-height: 1.45; }
       .result {
         margin-top: 16px;
         display: grid;
@@ -355,15 +354,121 @@ const ASS_PAGE = `<!doctype html>
       }
       .result-title { margin: 0 0 10px; font-size: 14px; color: #93c5fd; }
       .result-tip { margin: 0 0 10px; font-size: 12px; color: #94a3b8; }
+      .config-list { display: flex; gap: 8px; flex-wrap: wrap; }
+      .config-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid #334155;
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 12px;
+        color: #e2e8f0;
+        background: #111827;
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        display: inline-block;
+      }
+      .preprocess-panel {
+        border: 1px solid #334155;
+        border-radius: 10px;
+        min-height: 180px;
+        max-height: 420px;
+        overflow: auto;
+        background: #000b1d;
+      }
+      .preprocess-placeholder {
+        margin: 0;
+        padding: 12px;
+        color: #94a3b8;
+        font-size: 13px;
+      }
+      .cue-line {
+        border-bottom: 1px solid #1f2937;
+        padding: 10px 12px;
+        line-height: 1.5;
+      }
+      .cue-line:last-child { border-bottom: 0; }
+      .cue-meta {
+        color: #94a3b8;
+        font-size: 12px;
+        margin-bottom: 6px;
+      }
+      .cue-text { font-size: 14px; user-select: text; white-space: pre-wrap; word-break: break-word; }
+      .word-hit {
+        border-radius: 4px;
+        color: #0f172a;
+        padding: 0 2px;
+      }
+      .group-list { display: grid; grid-template-columns: 1fr; gap: 10px; }
+      .group-card {
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 10px;
+        background: #0b1220;
+      }
+      .group-title { margin: 0 0 8px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+      .group-items { margin: 0; color: #cbd5e1; font-size: 13px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+      .word-menu {
+        position: fixed;
+        z-index: 70;
+        min-width: 220px;
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 10px;
+        background: #020617;
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+      }
+      .word-menu[hidden] { display: none; }
+      .word-menu-title {
+        margin: 0 0 8px;
+        color: #bfdbfe;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .menu-actions { display: flex; flex-direction: column; gap: 6px; }
+      .menu-actions button {
+        text-align: left;
+        padding: 8px 10px;
+        font-size: 13px;
+      }
+      .menu-empty { margin: 0; color: #94a3b8; font-size: 12px; }
+      .mini-grid { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
       pre { margin: 0; white-space: pre-wrap; word-break: break-word; line-height: 1.45; }
       .error { color: #fca5a5; }
-      @media (max-width: 820px) { .mini-grid { grid-template-columns: 1fr; } }
+      .modal {
+        position: fixed;
+        inset: 0;
+        z-index: 80;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(2, 6, 23, 0.72);
+      }
+      .modal[hidden] { display: none; }
+      .modal-card {
+        width: min(520px, calc(100vw - 32px));
+        border: 1px solid #334155;
+        border-radius: 12px;
+        background: #020617;
+        padding: 16px;
+      }
+      .modal-title { margin: 0 0 12px; font-size: 16px; color: #dbeafe; }
+      .modal-actions { margin-top: 12px; display: flex; gap: 10px; justify-content: flex-end; }
+      @media (max-width: 820px) {
+        .mini-grid { grid-template-columns: 1fr; }
+      }
     </style>
   </head>
   <body>
     <main class="container">
       <a class="back-link" href="/">← 返回提取字幕页</a>
       <h1>关键词高亮（ASS）</h1>
+
       <div class="field">
         <label for="subtitleInput">输入字幕分段（你当前格式）</label>
         <textarea id="subtitleInput" placeholder="[001] 00:00:00.000 --> 00:00:01.760
@@ -372,23 +477,34 @@ I just want to hook up with a guy who's hot.
 [002] 00:00:01.900 --> 00:00:03.820
 I just want a guy who's good-looking and fun."></textarea>
       </div>
-      <div class="field">
-        <label for="keywordRules">高亮规则（每行一条）</label>
-        <textarea id="keywordRules" placeholder="hot
-3|in shape"></textarea>
-        <div class="hint-line">
-          规则说明：<br />
-          1) 仅写词（如 hot）= 全局高亮；<br />
-          2) 行号+竖线（如 1|hot、3|in shape）= 按第几条字幕高亮；<br />
-          3) 输入里的 [001] 仅是顺序标记，可有可无，不会写入字幕文本；<br />
-          4) 支持词组，忽略大小写匹配。
-        </div>
+
+      <div class="actions-row">
+        <button id="prepareHighlightBtn" type="button">高亮编辑操作</button>
+        <button id="addConfigBtn" type="button" class="subtle-btn">增加高亮配置</button>
       </div>
-      <div class="mini-grid">
-        <div class="field">
-          <label for="highlightColor">高亮色（BGR）</label>
-          <input id="highlightColor" type="text" value="&H0000FFFF" />
+
+      <div class="field">
+        <label>当前高亮配置</label>
+        <div id="configList" class="config-list"></div>
+        <div class="hint-line">先添加高亮配置，再在“高亮预处理文案”里选词进行绑定。</div>
+      </div>
+
+      <section class="result">
+        <div class="result-card">
+          <h2 class="result-title">高亮预处理文案</h2>
+          <p class="result-tip">点击“高亮编辑操作”后按行显示字幕。鼠标选中单词/短语，会弹出高亮操作面板。</p>
+          <div id="preprocessBody" class="preprocess-panel">
+            <p class="preprocess-placeholder">尚未生成高亮预处理文案</p>
+          </div>
         </div>
+
+        <div class="result-card">
+          <h2 class="result-title">已设置高亮词（按配置分组）</h2>
+          <div id="groupedHighlights" class="group-list"></div>
+        </div>
+      </section>
+
+      <div class="mini-grid">
         <div class="field">
           <label for="defaultColor">默认色（BGR）</label>
           <input id="defaultColor" type="text" value="&H00FFFFFF" />
@@ -397,11 +513,21 @@ I just want a guy who's good-looking and fun."></textarea>
           <label for="fontSize">字号</label>
           <input id="fontSize" type="text" value="48" />
         </div>
+        <div class="field">
+          <label for="outlineColor">黑框色（BGR）</label>
+          <input id="outlineColor" type="text" value="&H00000000" />
+        </div>
+        <div class="field">
+          <label for="outlineWidth">黑框厚度</label>
+          <input id="outlineWidth" type="text" value="2" />
+        </div>
       </div>
+
       <div class="actions-row">
         <button id="generateAssBtn" type="button">生成 ASS + 命令</button>
         <button id="downloadAssBtn" type="button" class="subtle-btn" disabled>下载 subtitle.ass</button>
       </div>
+
       <section class="result">
         <div class="result-card">
           <h2 class="result-title">ASS 字幕内容</h2>
@@ -414,17 +540,69 @@ I just want a guy who's good-looking and fun."></textarea>
         </div>
       </section>
     </main>
+
+    <div id="wordMenu" class="word-menu" hidden>
+      <p id="wordMenuTitle" class="word-menu-title"></p>
+      <div id="wordMenuActions" class="menu-actions"></div>
+    </div>
+
+    <div id="configModal" class="modal" hidden>
+      <div class="modal-card">
+        <h2 class="modal-title">新增高亮配置</h2>
+        <div class="field">
+          <label for="configNameInput">配置名称</label>
+          <input id="configNameInput" type="text" placeholder="例如：人名 / 重点词 / 品牌词" />
+        </div>
+        <div class="mini-grid">
+          <div class="field">
+            <label for="configColorInput">颜色（BGR）</label>
+            <input id="configColorInput" type="text" value="&H0000FFFF" />
+          </div>
+          <div class="field">
+            <label for="configColorPicker">颜色预选</label>
+            <input id="configColorPicker" type="color" value="#FFFF00" />
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="cancelConfigBtn" type="button" class="subtle-btn">取消</button>
+          <button id="saveConfigBtn" type="button">保存配置</button>
+        </div>
+      </div>
+    </div>
+
     <script>
       const subtitleInput = document.getElementById("subtitleInput");
-      const keywordRules = document.getElementById("keywordRules");
-      const highlightColor = document.getElementById("highlightColor");
+      const prepareHighlightBtn = document.getElementById("prepareHighlightBtn");
+      const addConfigBtn = document.getElementById("addConfigBtn");
+      const configList = document.getElementById("configList");
+      const preprocessBody = document.getElementById("preprocessBody");
+      const groupedHighlights = document.getElementById("groupedHighlights");
+      const wordMenu = document.getElementById("wordMenu");
+      const wordMenuTitle = document.getElementById("wordMenuTitle");
+      const wordMenuActions = document.getElementById("wordMenuActions");
+      const configModal = document.getElementById("configModal");
+      const configNameInput = document.getElementById("configNameInput");
+      const configColorInput = document.getElementById("configColorInput");
+      const configColorPicker = document.getElementById("configColorPicker");
+      const cancelConfigBtn = document.getElementById("cancelConfigBtn");
+      const saveConfigBtn = document.getElementById("saveConfigBtn");
+
       const defaultColor = document.getElementById("defaultColor");
+      const outlineColor = document.getElementById("outlineColor");
+      const outlineWidth = document.getElementById("outlineWidth");
       const fontSize = document.getElementById("fontSize");
       const generateAssBtn = document.getElementById("generateAssBtn");
       const downloadAssBtn = document.getElementById("downloadAssBtn");
       const outputAss = document.getElementById("outputAss");
       const outputCmd = document.getElementById("outputCmd");
+
       let lastAssContent = "";
+      let cuesCache = [];
+      let highlightConfigs = [
+        { id: "cfg-default", name: "默认高亮", color: "&H0000FFFF" }
+      ];
+      let assignments = [];
+      let selectedContext = null;
 
       function normalizeAssColor(input, fallback) {
         const value = String(input || "").trim().toUpperCase();
@@ -438,6 +616,19 @@ I just want a guy who's good-looking and fun."></textarea>
 
       function escapeAssText(text) {
         return text.replace(/\\\\/g, "\\\\\\\\").replace(/\\{/g, "\\\\{").replace(/\\}/g, "\\\\}");
+      }
+
+      function escapeHtml(text) {
+        return String(text || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function normalizeWord(value) {
+        return String(value || "").replace(/\\s+/g, " ").trim().toLowerCase();
       }
 
       function parseCueBlocks(input) {
@@ -460,12 +651,229 @@ I just want a guy who's good-looking and fun."></textarea>
         return cues;
       }
 
-      function parseRules(input) {
-        return input.replace(/\\r\\n/g, "\\n").split("\\n").map((line) => line.trim()).filter(Boolean).map((line) => {
-          const withLine = line.match(/^(\\d{1,4})\\s*\\|\\s*(.+)$/);
-          if (withLine) return { line: Number(withLine[1]), word: withLine[2].trim() };
-          return { line: null, word: line };
-        }).filter((rule) => rule.word.length > 0);
+      function assColorToCssHex(assColor) {
+        const value = normalizeAssColor(assColor, "&H00FFFFFF");
+        const raw = value.slice(2);
+        const bb = raw.slice(2, 4);
+        const gg = raw.slice(4, 6);
+        const rr = raw.slice(6, 8);
+        return "#" + rr + gg + bb;
+      }
+
+      function cssHexToAssColor(hex) {
+        const safe = /^#[0-9A-Fa-f]{6}$/.test(String(hex || "").trim()) ? String(hex).trim() : "#FFFF00";
+        const rr = safe.slice(1, 3).toUpperCase();
+        const gg = safe.slice(3, 5).toUpperCase();
+        const bb = safe.slice(5, 7).toUpperCase();
+        return "&H00" + bb + gg + rr;
+      }
+
+      function getConfigById(id) {
+        return highlightConfigs.find((item) => item.id === id) || null;
+      }
+
+      function collectMatches(text, entries) {
+        const source = String(text || "");
+        const all = [];
+        for (const entry of entries) {
+          const word = String(entry.word || "").trim();
+          if (!word) continue;
+          const re = new RegExp(escapeRegExp(word), "gi");
+          let m = null;
+          while ((m = re.exec(source)) !== null) {
+            if (!m[0]) break;
+            all.push({
+              start: m.index,
+              end: m.index + m[0].length,
+              hitText: m[0],
+              configId: entry.configId,
+              color: entry.color,
+              name: entry.name
+            });
+          }
+        }
+        all.sort((a, b) => (a.start - b.start) || ((b.end - b.start) - (a.end - a.start)));
+
+        const accepted = [];
+        const occupied = new Array(source.length).fill(false);
+        for (const item of all) {
+          if (item.end <= item.start) continue;
+          let conflict = false;
+          for (let i = item.start; i < item.end; i++) {
+            if (occupied[i]) {
+              conflict = true;
+              break;
+            }
+          }
+          if (conflict) continue;
+          for (let i = item.start; i < item.end; i++) occupied[i] = true;
+          accepted.push(item);
+        }
+        accepted.sort((a, b) => a.start - b.start);
+        return accepted;
+      }
+
+      function getCueAssignments(cueOrder) {
+        return assignments.filter((item) => item.cueOrder === cueOrder);
+      }
+
+      function buildHighlightedHtml(text, cueOrder) {
+        const current = getCueAssignments(cueOrder).map((item) => {
+          const cfg = getConfigById(item.configId);
+          if (!cfg) return null;
+          return { word: item.word, configId: item.configId, color: cfg.color, name: cfg.name };
+        }).filter(Boolean);
+
+        const matches = collectMatches(text, current);
+        if (matches.length === 0) return escapeHtml(text).replace(/\\n/g, "<br />");
+
+        let cursor = 0;
+        const parts = [];
+        for (const match of matches) {
+          parts.push(escapeHtml(text.slice(cursor, match.start)));
+          const style = "background:" + assColorToCssHex(match.color) + ";";
+          parts.push('<span class="word-hit" style="' + style + '" title="' + escapeHtml(match.name) + '">' + escapeHtml(text.slice(match.start, match.end)) + "</span>");
+          cursor = match.end;
+        }
+        parts.push(escapeHtml(text.slice(cursor)));
+        return parts.join("").replace(/\\n/g, "<br />");
+      }
+
+      function renderConfigList() {
+        if (highlightConfigs.length === 0) {
+          configList.innerHTML = '<p class="menu-empty">暂无配置，请先新增高亮配置。</p>';
+          return;
+        }
+        configList.innerHTML = highlightConfigs.map((cfg) => {
+          return '<span class="config-tag"><span class="dot" style="background:' + assColorToCssHex(cfg.color) + ';"></span>' + escapeHtml(cfg.name) + ' <code>' + escapeHtml(cfg.color) + "</code></span>";
+        }).join("");
+      }
+
+      function renderPreprocess() {
+        if (!Array.isArray(cuesCache) || cuesCache.length === 0) {
+          preprocessBody.innerHTML = '<p class="preprocess-placeholder">尚未生成高亮预处理文案</p>';
+          return;
+        }
+        preprocessBody.innerHTML = cuesCache.map((cue) => {
+          const meta = "[" + String(cue.order).padStart(3, "0") + "] " + cue.start + " --> " + cue.end;
+          const textHtml = buildHighlightedHtml(cue.text, cue.order);
+          return '<div class="cue-line" data-cue-order="' + cue.order + '" data-cue-index="' + cue.indexLabel + '"><div class="cue-meta">' + escapeHtml(meta) + '</div><div class="cue-text">' + textHtml + "</div></div>";
+        }).join("");
+      }
+
+      function renderGroupedHighlights() {
+        if (highlightConfigs.length === 0) {
+          groupedHighlights.innerHTML = '<p class="menu-empty">暂无高亮配置。</p>';
+          return;
+        }
+        const html = [];
+        for (const cfg of highlightConfigs) {
+          const items = assignments
+            .filter((item) => item.configId === cfg.id)
+            .map((item) => "[" + String(item.cueOrder).padStart(3, "0") + "] " + item.word);
+          const deduped = [...new Set(items)];
+          html.push(
+            '<div class="group-card">'
+            + '<h3 class="group-title"><span class="dot" style="background:' + assColorToCssHex(cfg.color) + ';"></span>' + escapeHtml(cfg.name) + " <code>" + escapeHtml(cfg.color) + "</code></h3>"
+            + '<p class="group-items">' + (deduped.length > 0 ? escapeHtml(deduped.join("\\n")) : "暂无词") + "</p>"
+            + "</div>"
+          );
+        }
+        groupedHighlights.innerHTML = html.join("");
+      }
+
+      function hideWordMenu() {
+        wordMenu.hidden = true;
+        selectedContext = null;
+      }
+
+      function nodeToCue(node) {
+        if (!node) return null;
+        if (node.nodeType === Node.ELEMENT_NODE) return node.closest(".cue-line");
+        return node.parentElement ? node.parentElement.closest(".cue-line") : null;
+      }
+
+      function buildWordMenuActions(context, existing) {
+        if (!context) return;
+        const actions = [];
+
+        if (!existing) {
+          if (highlightConfigs.length === 0) {
+            wordMenuActions.innerHTML = '<p class="menu-empty">还没有配置，请先新增高亮配置。</p>';
+            return;
+          }
+          for (const cfg of highlightConfigs) {
+            actions.push('<button type="button" data-action="apply" data-config-id="' + cfg.id + '">插入到「' + escapeHtml(cfg.name) + '」</button>');
+          }
+        } else {
+          const cfg = getConfigById(existing.configId);
+          const title = cfg ? "已绑定配置：" + cfg.name : "已绑定配置";
+          actions.push('<p class="menu-empty">' + escapeHtml(title) + "</p>");
+          actions.push('<button type="button" class="subtle-btn" data-action="clear">清除高亮配置</button>');
+          for (const candidate of highlightConfigs) {
+            if (existing.configId === candidate.id) continue;
+            actions.push('<button type="button" data-action="apply" data-config-id="' + candidate.id + '">改为「' + escapeHtml(candidate.name) + '」</button>');
+          }
+        }
+        wordMenuActions.innerHTML = '<div class="menu-actions">' + actions.join("") + "</div>";
+      }
+
+      function showWordMenu(rangeRect, context) {
+        const existing = assignments.find((item) => item.cueOrder === context.cueOrder && item.norm === context.norm) || null;
+        wordMenuTitle.textContent = "词: " + context.word + "  |  行: " + String(context.cueOrder).padStart(3, "0");
+        buildWordMenuActions(context, existing);
+
+        const viewportPadding = 10;
+        const top = Math.min(window.innerHeight - 120, Math.max(viewportPadding, rangeRect.bottom + 8));
+        const left = Math.min(window.innerWidth - 250, Math.max(viewportPadding, rangeRect.left));
+        wordMenu.style.top = top + "px";
+        wordMenu.style.left = left + "px";
+        wordMenu.hidden = false;
+      }
+
+      function clearBrowserSelection() {
+        const selection = window.getSelection();
+        if (selection) selection.removeAllRanges();
+      }
+
+      function applyAssignment(configId) {
+        if (!selectedContext) return;
+        const hit = assignments.find((item) => item.cueOrder === selectedContext.cueOrder && item.norm === selectedContext.norm);
+        if (hit) {
+          hit.configId = configId;
+          hit.word = selectedContext.word;
+        } else {
+          assignments.push({
+            cueOrder: selectedContext.cueOrder,
+            cueIndexLabel: selectedContext.cueIndexLabel,
+            word: selectedContext.word,
+            norm: selectedContext.norm,
+            configId
+          });
+        }
+        renderPreprocess();
+        renderGroupedHighlights();
+        hideWordMenu();
+        clearBrowserSelection();
+      }
+
+      function clearAssignment() {
+        if (!selectedContext) return;
+        assignments = assignments.filter((item) => !(item.cueOrder === selectedContext.cueOrder && item.norm === selectedContext.norm));
+        renderPreprocess();
+        renderGroupedHighlights();
+        hideWordMenu();
+        clearBrowserSelection();
+      }
+
+      function syncPickerFromAssInput() {
+        configColorInput.value = normalizeAssColor(configColorInput.value, "&H0000FFFF");
+        configColorPicker.value = assColorToCssHex(configColorInput.value);
+      }
+
+      function pruneAssignmentsByCues() {
+        const valid = new Set(cuesCache.map((cue) => cue.order));
+        assignments = assignments.filter((item) => valid.has(item.cueOrder));
       }
 
       function toAssTime(timeWithMs) {
@@ -478,27 +886,35 @@ I just want a guy who's good-looking and fun."></textarea>
         return String(hour) + ":" + String(min).padStart(2, "0") + ":" + String(sec).padStart(2, "0") + "." + String(cs).padStart(2, "0");
       }
 
-      function applyHighlight(rawText, cueOrder, cueIndexLabel, rules, hitColor, normalColor) {
-        const escaped = escapeAssText(rawText);
-        const words = rules
-          .filter((rule) => !rule.line || rule.line === cueOrder || rule.line === cueIndexLabel)
-          .map((rule) => rule.word.trim())
+      function applyMultiHighlight(rawText, cueOrder, normalColor) {
+        const cueEntries = assignments
+          .filter((item) => item.cueOrder === cueOrder)
+          .map((item) => {
+            const cfg = getConfigById(item.configId);
+            if (!cfg) return null;
+            return { word: item.word, configId: item.configId, color: cfg.color, name: cfg.name };
+          })
           .filter(Boolean);
-        if (words.length === 0) return escaped.replace(/\\n/g, "\\\\N");
-        const uniqueWords = [...new Set(words)].sort((a, b) => b.length - a.length);
-        let highlighted = escaped;
-        for (const word of uniqueWords) {
-          const escapedWord = escapeAssText(word);
-          if (!escapedWord) continue;
-          const pattern = new RegExp(escapeRegExp(escapedWord), "gi");
-          highlighted = highlighted.replace(pattern, "{\\\\\\\\c" + hitColor + "}$&{\\\\\\\\c" + normalColor + "}");
+
+        const matches = collectMatches(rawText, cueEntries);
+        if (matches.length === 0) return escapeAssText(rawText).replace(/\\n/g, "\\\\N");
+
+        let cursor = 0;
+        const parts = [];
+        for (const match of matches) {
+          parts.push(escapeAssText(rawText.slice(cursor, match.start)));
+          parts.push("{\\\\c" + match.color + "}" + escapeAssText(rawText.slice(match.start, match.end)) + "{\\\\c" + normalColor + "}");
+          cursor = match.end;
         }
-        return highlighted.replace(/\\n/g, "\\\\N");
+        parts.push(escapeAssText(rawText.slice(cursor)));
+        return parts.join("").replace(/\\n/g, "\\\\N");
       }
 
-      function buildAssContent(cues, rules, hitColor, normalColor, fontSizeValue) {
+      function buildAssContent(cues, normalColor, borderColor, borderWidthValue, fontSizeValue) {
         const sizeNum = Number(fontSizeValue);
         const safeSize = Number.isFinite(sizeNum) && sizeNum > 0 ? Math.round(sizeNum) : 48;
+        const borderNum = Number(borderWidthValue);
+        const safeBorder = Number.isFinite(borderNum) && borderNum >= 0 ? Math.min(12, Math.round(borderNum)) : 2;
         const lines = [
           "[Script Info]",
           "ScriptType: v4.00+",
@@ -507,13 +923,13 @@ I just want a guy who's good-looking and fun."></textarea>
           "",
           "[V4+ Styles]",
           "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-          "Style: Default,Arial," + safeSize + "," + normalColor + ",&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1",
+          "Style: Default,Arial," + safeSize + "," + normalColor + ",&H000000FF,&H00000000," + borderColor + ",-1,0,0,0,100,100,0,0,3," + safeBorder + ",0,2,10,10,40,1",
           "",
           "[Events]",
           "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
         ];
         for (const cue of cues) {
-          const text = applyHighlight(cue.text, cue.order, cue.indexLabel, rules, hitColor, normalColor);
+          const text = applyMultiHighlight(cue.text, cue.order, normalColor);
           lines.push("Dialogue: 0," + toAssTime(cue.start) + "," + toAssTime(cue.end) + ",Default,,0,0,0,," + text);
         }
         return lines.join("\\n");
@@ -526,15 +942,119 @@ I just want a guy who's good-looking and fun."></textarea>
         downloadAssBtn.disabled = true;
       }
 
+      prepareHighlightBtn.addEventListener("click", () => {
+        cuesCache = parseCueBlocks(subtitleInput.value || "");
+        if (cuesCache.length === 0) {
+          preprocessBody.innerHTML = '<p class="preprocess-placeholder">未识别到有效字幕块，请确认格式为“时间轴 + 文本”。</p>';
+          assignments = [];
+          renderGroupedHighlights();
+          hideWordMenu();
+          return;
+        }
+        pruneAssignmentsByCues();
+        renderPreprocess();
+        renderGroupedHighlights();
+      });
+
+      preprocessBody.addEventListener("mouseup", () => {
+        setTimeout(() => {
+          const selection = window.getSelection();
+          if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+            hideWordMenu();
+            return;
+          }
+          const text = selection.toString().replace(/\\s+/g, " ").trim();
+          if (!text) {
+            hideWordMenu();
+            return;
+          }
+          const range = selection.getRangeAt(0);
+          if (!preprocessBody.contains(range.commonAncestorContainer)) {
+            hideWordMenu();
+            return;
+          }
+          const startCue = nodeToCue(range.startContainer);
+          const endCue = nodeToCue(range.endContainer);
+          if (!startCue || !endCue || startCue !== endCue) {
+            hideWordMenu();
+            return;
+          }
+          const cueOrder = Number(startCue.getAttribute("data-cue-order"));
+          const cueIndexLabel = Number(startCue.getAttribute("data-cue-index"));
+          if (!Number.isFinite(cueOrder) || !text) {
+            hideWordMenu();
+            return;
+          }
+          selectedContext = {
+            cueOrder,
+            cueIndexLabel,
+            word: text,
+            norm: normalizeWord(text)
+          };
+          const rect = range.getBoundingClientRect();
+          showWordMenu(rect, selectedContext);
+        }, 0);
+      });
+
+      wordMenuActions.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const action = target.getAttribute("data-action");
+        if (action === "clear") return clearAssignment();
+        if (action === "apply") {
+          const configId = target.getAttribute("data-config-id");
+          if (configId) applyAssignment(configId);
+        }
+      });
+
+      document.addEventListener("mousedown", (event) => {
+        const target = event.target;
+        if (!(target instanceof Node)) return;
+        if (wordMenu.hidden) return;
+        if (wordMenu.contains(target)) return;
+        hideWordMenu();
+      });
+
+      addConfigBtn.addEventListener("click", () => {
+        configNameInput.value = "";
+        configColorInput.value = "&H0000FFFF";
+        syncPickerFromAssInput();
+        configModal.hidden = false;
+        configNameInput.focus();
+      });
+
+      cancelConfigBtn.addEventListener("click", () => {
+        configModal.hidden = true;
+      });
+
+      configColorInput.addEventListener("input", syncPickerFromAssInput);
+      configColorPicker.addEventListener("input", () => {
+        configColorInput.value = cssHexToAssColor(configColorPicker.value);
+      });
+
+      saveConfigBtn.addEventListener("click", () => {
+        const name = String(configNameInput.value || "").trim();
+        if (!name) return;
+        const color = normalizeAssColor(configColorInput.value, "&H0000FFFF");
+        const id = "cfg-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+        highlightConfigs.push({ id, name, color });
+        configModal.hidden = true;
+        renderConfigList();
+        renderGroupedHighlights();
+      });
+
+      configModal.addEventListener("mousedown", (event) => {
+        if (event.target === configModal) configModal.hidden = true;
+      });
+
       generateAssBtn.addEventListener("click", () => {
         const cues = parseCueBlocks(subtitleInput.value || "");
         if (cues.length === 0) return showError("未识别到有效字幕块，请使用“时间轴 + 文本”格式；[001] 可选，仅作顺序标记。");
-        const rules = parseRules(keywordRules.value || "");
-        if (rules.length === 0) return showError("请至少填写一个高亮词规则。");
+        if (assignments.length === 0) return showError("请先在“高亮预处理文案”里选词并设置至少一条高亮配置。");
 
-        const hitColor = normalizeAssColor(highlightColor.value, "&H0000FFFF");
         const normalColor = normalizeAssColor(defaultColor.value, "&H00FFFFFF");
-        const ass = buildAssContent(cues, rules, hitColor, normalColor, fontSize.value);
+        const borderColor = normalizeAssColor(outlineColor.value, "&H00000000");
+        const ass = buildAssContent(cues, normalColor, borderColor, outlineWidth.value, fontSize.value);
         lastAssContent = ass;
         outputAss.textContent = ass;
         outputCmd.textContent = [
@@ -559,6 +1079,9 @@ I just want a guy who's good-looking and fun."></textarea>
         a.remove();
         URL.revokeObjectURL(url);
       });
+
+      renderConfigList();
+      renderGroupedHighlights();
     </script>
   </body>
 </html>`;
