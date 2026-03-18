@@ -1095,6 +1095,12 @@ I just want a guy who's good-looking and fun."></textarea>
         previewStage.style.aspectRatio = String(previewVideoMeta.width) + " / " + String(previewVideoMeta.height);
       }
 
+      function getPreviewScaleY() {
+        const stageHeight = Math.max(1, subtitleOverlay.clientHeight || previewStage.clientHeight || 1080);
+        const playResY = Math.max(1, Math.round(Number(previewVideoMeta?.height) || 1080));
+        return stageHeight / playResY;
+      }
+
       function buildPreviewCueHtml(rawText, cueOrder) {
         const cueEntries = assignments
           .filter((item) => item.cueOrder === cueOrder)
@@ -1132,16 +1138,19 @@ I just want a guy who's good-looking and fun."></textarea>
         const safeBorder = Number.isFinite(borderNum) && borderNum >= 0 ? Math.min(12, Math.round(borderNum)) : 2;
         const sizeNum = Number(fontSize.value);
         const safeSize = Number.isFinite(sizeNum) && sizeNum > 0 ? Math.round(sizeNum) : 48;
+        const scaleY = getPreviewScaleY();
+        const previewFontPx = Math.max(8, Math.round(safeSize * scaleY));
+        const previewBorderPx = Math.max(1, Math.round(safeBorder * scaleY));
         const offset = sanitizeOffset(subtitleOffset.value);
 
         subtitleOverlay.style.justifyContent = "flex-end";
         subtitleOverlay.style.paddingTop = "0";
         subtitleOverlay.style.paddingBottom = String(offset) + "px";
         subtitleOverlayText.style.transform = "translateY(0)";
-        subtitleOverlayText.style.fontSize = String(safeSize) + "px";
+        subtitleOverlayText.style.fontSize = String(previewFontPx) + "px";
         subtitleOverlayText.style.color = assColorToCssHex(normal);
         subtitleOverlayText.style.background = assColorToCssRgba(back, "rgba(0,0,0,0.82)");
-        subtitleOverlayText.style.padding = String(Math.max(2, safeBorder * 2)) + "px " + String(Math.max(8, safeBorder * 4)) + "px";
+        subtitleOverlayText.style.padding = String(Math.max(2, previewBorderPx * 2)) + "px " + String(Math.max(8, previewBorderPx * 4)) + "px";
       }
 
       function refreshPreviewText() {
