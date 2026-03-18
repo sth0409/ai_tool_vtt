@@ -1056,7 +1056,9 @@ I just want a guy who's good-looking and fun."></textarea>
         const n = Number(value);
         if (!Number.isFinite(n)) return 40;
         if (n < 0) return 40;
-        return Math.min(300, Math.round(n));
+        const stageHeight = Math.max(1, subtitleOverlay.clientHeight || previewStage.clientHeight || 1080);
+        const dynamicMax = Math.max(120, Math.round(stageHeight * 0.9));
+        return Math.min(dynamicMax, Math.round(n));
       }
 
       function syncOpacitySliderFromOutlineColor() {
