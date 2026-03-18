@@ -475,6 +475,7 @@ const ASS_PAGE = `<!doctype html>
         inset: 0;
         pointer-events: none;
         display: flex;
+        flex-direction: column;
         justify-content: flex-end;
         align-items: center;
         padding: 0 16px 40px;
@@ -1222,11 +1223,14 @@ I just want a guy who's good-looking and fun."></textarea>
         window.removeEventListener("pointercancel", endSubtitleDrag);
       }
 
-      function getMiddlePosY(offsetValue) {
+      function getExportPosY(alignValue, offsetValue) {
         const stageHeight = Math.max(1, subtitleOverlay.clientHeight || 1080);
-        const offset = sanitizeOffset(offsetValue, "middle");
-        const y = 540 + Math.round(offset * (1080 / stageHeight));
-        return Math.max(0, Math.min(1080, y));
+        const align = String(alignValue || "bottom");
+        const offset = sanitizeOffset(offsetValue, align);
+        const scaled = Math.round(offset * (1080 / stageHeight));
+        if (align === "top") return Math.max(0, Math.min(1080, scaled));
+        if (align === "middle") return Math.max(0, Math.min(1080, 540 + scaled));
+        return Math.max(0, Math.min(1080, 1080 - scaled));
       }
 
       function buildAssContent(cues, normalColor, borderColor, borderWidthValue, fontSizeValue, alignValue, offsetValue) {
@@ -1234,9 +1238,9 @@ I just want a guy who's good-looking and fun."></textarea>
         const safeSize = Number.isFinite(sizeNum) && sizeNum > 0 ? Math.round(sizeNum) : 48;
         const borderNum = Number(borderWidthValue);
         const safeBorder = Number.isFinite(borderNum) && borderNum >= 0 ? Math.min(12, Math.round(borderNum)) : 2;
-        const alignCode = getAlignmentCode(String(alignValue || "bottom"));
-        const safeOffset = sanitizeOffset(offsetValue, String(alignValue || "bottom"));
-        const middlePosY = alignCode === 5 ? getMiddlePosY(offsetValue) : null;
+        const align = String(alignValue || "bottom");
+        const alignCode = getAlignmentCode(align);
+        const exportY = getExportPosY(align, offsetValue);
         const lines = [
           "[Script Info]",
           "ScriptType: v4.00+",
@@ -1245,14 +1249,14 @@ I just want a guy who's good-looking and fun."></textarea>
           "",
           "[V4+ Styles]",
           "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-          "Style: Default,Arial," + safeSize + "," + normalColor + ",&H000000FF,&H00000000," + borderColor + ",-1,0,0,0,100,100,0,0,3," + safeBorder + ",0," + alignCode + ",10,10," + safeOffset + ",1",
+          "Style: Default,Arial," + safeSize + "," + normalColor + ",&H000000FF,&H00000000," + borderColor + ",-1,0,0,0,100,100,0,0,3," + safeBorder + ",0," + alignCode + ",10,10,0,1",
           "",
           "[Events]",
           "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
         ];
         for (const cue of cues) {
           const text = applyMultiHighlight(cue.text, cue.order, normalColor);
-          const decorated = alignCode === 5 ? "{\\\\an5\\\\pos(960," + String(middlePosY) + ")}" + text : text;
+          const decorated = "{\\\\an" + String(alignCode) + "\\\\pos(960," + String(exportY) + ")}" + text;
           lines.push("Dialogue: 0," + toAssTime(cue.start) + "," + toAssTime(cue.end) + ",Default,,0,0,0,," + decorated);
         }
         return lines.join("\\n");
