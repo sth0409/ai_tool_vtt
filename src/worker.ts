@@ -488,6 +488,7 @@ const ASS_PAGE = `<!doctype html>
         border-radius: 6px;
         padding: 4px 12px;
         font-size: 40px;
+        font-family: Arial, "Segoe UI", sans-serif;
         line-height: 1.32;
         color: #ffffff;
         background: rgba(0, 0, 0, 0.82);
@@ -1189,25 +1190,29 @@ I just want a guy who's good-looking and fun."></textarea>
         window.removeEventListener("pointercancel", endSubtitleDrag);
       }
 
-      function getExportPosY(offsetValue) {
+      function getExportPosY(offsetValue, playResY) {
         const stageHeight = Math.max(1, subtitleOverlay.clientHeight || 1080);
         const offset = sanitizeOffset(offsetValue);
-        const scaled = Math.round(offset * (1080 / stageHeight));
-        return Math.max(0, Math.min(1080, 1080 - scaled));
+        const safePlayResY = Math.max(1, Math.round(Number(playResY) || 1080));
+        const scaled = Math.round(offset * (safePlayResY / stageHeight));
+        return Math.max(0, Math.min(safePlayResY, safePlayResY - scaled));
       }
 
-      function buildAssContent(cues, normalColor, borderColor, borderWidthValue, fontSizeValue, offsetValue) {
+      function buildAssContent(cues, normalColor, borderColor, borderWidthValue, fontSizeValue, offsetValue, playResXValue, playResYValue) {
         const sizeNum = Number(fontSizeValue);
         const safeSize = Number.isFinite(sizeNum) && sizeNum > 0 ? Math.round(sizeNum) : 48;
         const borderNum = Number(borderWidthValue);
         const safeBorder = Number.isFinite(borderNum) && borderNum >= 0 ? Math.min(12, Math.round(borderNum)) : 2;
         const alignCode = 2;
-        const exportY = getExportPosY(offsetValue);
+        const playResX = Math.max(1, Math.round(Number(playResXValue) || 1920));
+        const playResY = Math.max(1, Math.round(Number(playResYValue) || 1080));
+        const exportY = getExportPosY(offsetValue, playResY);
+        const exportX = Math.round(playResX / 2);
         const lines = [
           "[Script Info]",
           "ScriptType: v4.00+",
-          "PlayResX: 1920",
-          "PlayResY: 1080",
+          "PlayResX: " + playResX,
+          "PlayResY: " + playResY,
           "",
           "[V4+ Styles]",
           "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
@@ -1218,7 +1223,7 @@ I just want a guy who's good-looking and fun."></textarea>
         ];
         for (const cue of cues) {
           const text = applyMultiHighlight(cue.text, cue.order, normalColor);
-          const decorated = "{\\\\an" + String(alignCode) + "\\\\pos(960," + String(exportY) + ")}" + text;
+          const decorated = "{\\\\an" + String(alignCode) + "\\\\pos(" + String(exportX) + "," + String(exportY) + ")}" + text;
           lines.push("Dialogue: 0," + toAssTime(cue.start) + "," + toAssTime(cue.end) + ",Default,,0,0,0,," + decorated);
         }
         return lines.join("\\n");
@@ -1400,7 +1405,9 @@ I just want a guy who's good-looking and fun."></textarea>
 
         const normalColor = normalizeAssColor(defaultColor.value, "&H00FFFFFF");
         const borderColor = normalizeAssColor(outlineColor.value, "&H00000000");
-        const ass = buildAssContent(cues, normalColor, borderColor, outlineWidth.value, fontSize.value, subtitleOffset.value);
+        const playResX = previewVideoMeta?.width || 1920;
+        const playResY = previewVideoMeta?.height || 1080;
+        const ass = buildAssContent(cues, normalColor, borderColor, outlineWidth.value, fontSize.value, subtitleOffset.value, playResX, playResY);
         lastAssContent = ass;
         outputAss.textContent = ass;
         outputCmd.textContent = [
