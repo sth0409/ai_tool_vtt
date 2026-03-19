@@ -5,6 +5,124 @@ interface Env {
 }
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+const AI_ASS_MODEL = "@cf/openai/gpt-oss-120b";
+const AI_ASS_ANALYSIS_INSTRUCTIONS = `你是一位专业的雅思（IELTS）英语教师和词汇分析师。你将收到带序号的英语字幕句子，请输出严格 JSON（不要 markdown、不要注释）。
+
+分析要求（严格遵守）：
+1) 高价值词汇（HVC）：提取雅思核心词汇或难度 B2-C1 的词。
+2) 固定搭配/短语动词（Collocations/Phrasal Verbs）：提取两个及以上单词组成、语义不完全字面化的搭配。
+3) 地道表达/俚语（Idioms/Expressions）：提取提升口语流利度的表达。
+4) 口语常用句型（Spoken Patterns）：提取适合口语复用的句型（如 "I'm hooked on ..."）。
+5) 每句话都要给出自然、准确的中文翻译。
+
+输出 JSON 结构（字段名必须一致）：
+{
+  "cues": [
+    {
+      "order": 1,
+      "translation_zh": "中文翻译",
+      "hvc": ["..."],
+      "collocations": ["..."],
+      "expressions": ["..."],
+      "spoken_patterns": ["..."]
+    }
+  ]
+}
+
+规则：
+- order 必须与输入序号一致。
+- 所有数组可为空，但必须存在。
+- 不要遗漏句子。`;
+
+type AiAssCueAnalysis = {
+  order: number;
+  translation_zh: string;
+  hvc: string[];
+  collocations: string[];
+  expressions: string[];
+  spoken_patterns: string[];
+};
+
+function collectStringValues(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap((item) => collectStringValues(item));
+  if (!value || typeof value !== "object") return [];
+
+  const obj = value as Record<string, unknown>;
+  const keys = [
+    "response",
+    "text",
+    "content",
+    "output_text",
+    "generated_text"
+  ];
+  const direct = keys.flatMap((key) => collectStringValues(obj[key]));
+  const nested = Object.values(obj).flatMap((item) => collectStringValues(item));
+  return [...direct, ...nested];
+}
+
+function extractJsonText(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) return fenced[1].trim();
+
+  const first = trimmed.indexOf("{");
+  const last = trimmed.lastIndexOf("}");
+  if (first >= 0 && last > first) return trimmed.slice(first, last + 1);
+
+  return null;
+}
+
+function toStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const list = value
+    .map((item) => String(item ?? "").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  return [...new Set(list)];
+}
+
+function normalizeAiAssCues(value: unknown): AiAssCueAnalysis[] {
+  if (!Array.isArray(value)) return [];
+  const cues: AiAssCueAnalysis[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const order = Number(row.order);
+    if (!Number.isFinite(order)) continue;
+    cues.push({
+      order: Math.round(order),
+      translation_zh: String(row.translation_zh ?? "").trim(),
+      hvc: toStringList(row.hvc),
+      collocations: toStringList(row.collocations),
+      expressions: toStringList(row.expressions),
+      spoken_patterns: toStringList(row.spoken_patterns)
+    });
+  }
+  return cues;
+}
+
+function parseAiAssAnalysis(result: Record<string, unknown>): AiAssCueAnalysis[] {
+  if (Array.isArray(result.cues)) {
+    return normalizeAiAssCues(result.cues);
+  }
+
+  const candidates = collectStringValues(result);
+  for (const text of candidates) {
+    const jsonText = extractJsonText(text);
+    if (!jsonText) continue;
+    try {
+      const parsed = JSON.parse(jsonText) as Record<string, unknown>;
+      const cues = normalizeAiAssCues(parsed.cues);
+      if (cues.length > 0) return cues;
+    } catch {
+      // ignore parse failure and try next candidate
+    }
+  }
+
+  return [];
+}
 
 const EXTRACT_PAGE = `<!doctype html>
 <html lang="zh-CN">
@@ -399,10 +517,23 @@ const ASS_PAGE = `<!doctype html>
         margin-bottom: 6px;
       }
       .cue-text { font-size: 14px; user-select: text; white-space: pre-wrap; word-break: break-word; }
+      .cue-translation {
+        margin-top: 6px;
+        font-size: 13px;
+        color: #93c5fd;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
       .word-hit {
         border-radius: 4px;
         color: #0f172a;
         padding: 0 2px;
+      }
+      .ai-status {
+        margin-top: 8px;
+        min-height: 20px;
+        color: #94a3b8;
+        font-size: 12px;
       }
       .group-list { display: grid; grid-template-columns: 1fr; gap: 10px; }
       .group-card {
@@ -543,8 +674,10 @@ I just want a guy who's good-looking and fun."></textarea>
 
       <div class="actions-row">
         <button id="prepareHighlightBtn" type="button">高亮编辑操作</button>
+        <button id="aiAnalyzeBtn" type="button">AI 自动分析（3类高亮+翻译）</button>
         <button id="addConfigBtn" type="button" class="subtle-btn">增加高亮配置</button>
       </div>
+      <div id="aiStatus" class="ai-status"></div>
 
       <div class="field">
         <label>当前高亮配置</label>
@@ -660,6 +793,8 @@ I just want a guy who's good-looking and fun."></textarea>
     <script>
       const subtitleInput = document.getElementById("subtitleInput");
       const prepareHighlightBtn = document.getElementById("prepareHighlightBtn");
+      const aiAnalyzeBtn = document.getElementById("aiAnalyzeBtn");
+      const aiStatus = document.getElementById("aiStatus");
       const addConfigBtn = document.getElementById("addConfigBtn");
       const configList = document.getElementById("configList");
       const preprocessBody = document.getElementById("preprocessBody");
@@ -698,11 +833,13 @@ I just want a guy who's good-looking and fun."></textarea>
       let dragState = null;
       let previewVideoMeta = null;
       let cuesCache = [];
+      let cueTranslations = {};
       let highlightConfigs = [
         { id: "cfg-default", name: "默认高亮", color: "&H0000FFFF" }
       ];
       let assignments = [];
       let selectedContext = null;
+      let aiAnalyzing = false;
 
       function normalizeAssColor(input, fallback) {
         const value = String(input || "").trim().toUpperCase();
@@ -729,6 +866,87 @@ I just want a guy who's good-looking and fun."></textarea>
 
       function normalizeWord(value) {
         return String(value || "").replace(/\\s+/g, " ").trim().toLowerCase();
+      }
+
+      function setAiStatus(message, isError) {
+        aiStatus.textContent = message || "";
+        aiStatus.style.color = isError ? "#fca5a5" : "#94a3b8";
+      }
+
+      function setAiAnalyzingState(active) {
+        aiAnalyzing = active;
+        aiAnalyzeBtn.disabled = active;
+        aiAnalyzeBtn.textContent = active ? "AI 分析中..." : "AI 自动分析（3类高亮+翻译）";
+      }
+
+      function toUniqueTerms(list) {
+        if (!Array.isArray(list)) return [];
+        const cleaned = list
+          .map((item) => String(item || "").replace(/\\s+/g, " ").trim())
+          .filter(Boolean);
+        return [...new Set(cleaned)];
+      }
+
+      function createAiConfigs() {
+        return [
+          { id: "cfg-ai-hvc", key: "hvc", name: "高价值词汇（HVC）", color: "&H0000FFFF" },
+          { id: "cfg-ai-collocations", key: "collocations", name: "固定搭配/短语动词", color: "&H0032CD32" },
+          { id: "cfg-ai-expressions", key: "expressions", name: "地道表达/俚语", color: "&H00FF00AA" }
+        ];
+      }
+
+      function resetAiData() {
+        cueTranslations = {};
+        assignments = [];
+      }
+
+      function applyAiAnalysis(cues, aiCues) {
+        const cueByOrder = new Map(cues.map((cue) => [cue.order, cue]));
+        const aiConfigs = createAiConfigs();
+        highlightConfigs = aiConfigs.map((cfg) => ({ id: cfg.id, name: cfg.name, color: cfg.color }));
+        resetAiData();
+
+        const assignmentIndex = new Set();
+        const keyByConfig = {
+          hvc: "cfg-ai-hvc",
+          collocations: "cfg-ai-collocations",
+          expressions: "cfg-ai-expressions"
+        };
+
+        for (const row of aiCues) {
+          const order = Number(row?.order);
+          if (!Number.isFinite(order)) continue;
+          const cue = cueByOrder.get(order);
+          if (!cue) continue;
+
+          const zh = String(row?.translation_zh || "").trim();
+          if (zh) cueTranslations[String(order)] = zh;
+
+          const bucketList = [
+            { key: "hvc", terms: toUniqueTerms(row?.hvc) },
+            { key: "collocations", terms: toUniqueTerms(row?.collocations) },
+            { key: "expressions", terms: [...toUniqueTerms(row?.expressions), ...toUniqueTerms(row?.spoken_patterns)] }
+          ];
+
+          for (const bucket of bucketList) {
+            const configId = keyByConfig[bucket.key];
+            if (!configId) continue;
+            for (const term of bucket.terms) {
+              const norm = normalizeWord(term);
+              if (!norm) continue;
+              const fingerprint = String(order) + "::" + configId + "::" + norm;
+              if (assignmentIndex.has(fingerprint)) continue;
+              assignmentIndex.add(fingerprint);
+              assignments.push({
+                cueOrder: order,
+                cueIndexLabel: cue.indexLabel,
+                word: term,
+                norm,
+                configId
+              });
+            }
+          }
+        }
       }
 
       function parseTimeToSeconds(timeWithMs) {
@@ -898,7 +1116,9 @@ I just want a guy who's good-looking and fun."></textarea>
         preprocessBody.innerHTML = cuesCache.map((cue) => {
           const meta = "[" + String(cue.order).padStart(3, "0") + "] " + cue.start + " --> " + cue.end;
           const textHtml = buildHighlightedHtml(cue.text, cue.order);
-          return '<div class="cue-line" data-cue-order="' + cue.order + '" data-cue-index="' + cue.indexLabel + '"><div class="cue-meta">' + escapeHtml(meta) + '</div><div class="cue-text">' + textHtml + "</div></div>";
+          const zh = String(cueTranslations[String(cue.order)] || "").trim();
+          const zhHtml = zh ? '<div class="cue-translation">中译：' + escapeHtml(zh) + "</div>" : "";
+          return '<div class="cue-line" data-cue-order="' + cue.order + '" data-cue-index="' + cue.indexLabel + '"><div class="cue-meta">' + escapeHtml(meta) + '</div><div class="cue-text">' + textHtml + "</div>" + zhHtml + "</div>";
         }).join("");
       }
 
@@ -1017,6 +1237,12 @@ I just want a guy who's good-looking and fun."></textarea>
       function pruneAssignmentsByCues() {
         const valid = new Set(cuesCache.map((cue) => cue.order));
         assignments = assignments.filter((item) => valid.has(item.cueOrder));
+        const nextTranslations = {};
+        for (const cue of cuesCache) {
+          const key = String(cue.order);
+          if (cueTranslations[key]) nextTranslations[key] = cueTranslations[key];
+        }
+        cueTranslations = nextTranslations;
       }
 
       function toAssTime(timeWithMs) {
@@ -1250,6 +1476,7 @@ I just want a guy who's good-looking and fun."></textarea>
         if (cuesCache.length === 0) {
           preprocessBody.innerHTML = '<p class="preprocess-placeholder">未识别到有效字幕块，请确认格式为“时间轴 + 文本”。</p>';
           assignments = [];
+          cueTranslations = {};
           renderGroupedHighlights();
           refreshPreviewText();
           hideWordMenu();
@@ -1259,6 +1486,56 @@ I just want a guy who's good-looking and fun."></textarea>
         renderPreprocess();
         renderGroupedHighlights();
         refreshPreviewText();
+      });
+
+      aiAnalyzeBtn.addEventListener("click", async () => {
+        if (aiAnalyzing) return;
+        const cues = parseCueBlocks(subtitleInput.value || "");
+        if (cues.length === 0) {
+          setAiStatus("请先输入有效字幕分段，再执行 AI 分析。", true);
+          return;
+        }
+        const requestCues = cues.slice(0, 300).map((cue) => ({
+          order: cue.order,
+          text: cue.text
+        }));
+        setAiAnalyzingState(true);
+        setAiStatus("正在调用 AI：生成 3 类高亮配置并逐句翻译...", false);
+        try {
+          const response = await fetch("/api/ass/ai-analyze", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ cues: requestCues })
+          });
+          const raw = await response.text();
+          let data = null;
+          try {
+            data = raw ? JSON.parse(raw) : {};
+          } catch {
+            throw new Error("AI 接口返回了不可解析的数据。");
+          }
+          if (!response.ok) {
+            throw new Error(String(data?.error || "AI 分析失败"));
+          }
+          const aiCues = Array.isArray(data?.cues) ? data.cues : [];
+          if (aiCues.length === 0) {
+            throw new Error("AI 没有返回有效分析结果，请重试。");
+          }
+
+          cuesCache = cues;
+          applyAiAnalysis(cues, aiCues);
+          pruneAssignmentsByCues();
+          renderConfigList();
+          renderPreprocess();
+          renderGroupedHighlights();
+          refreshPreviewText();
+          hideWordMenu();
+          setAiStatus("AI 分析完成：已生成 3 类高亮配置，并完成逐句中文翻译。", false);
+        } catch (error) {
+          setAiStatus(error?.message || "AI 分析失败", true);
+        } finally {
+          setAiAnalyzingState(false);
+        }
       });
 
       preprocessBody.addEventListener("mouseup", () => {
@@ -1491,6 +1768,89 @@ export default {
           "content-type": "text/html; charset=utf-8"
         }
       });
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/ass/ai-analyze") {
+      const contentType = request.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/json")) {
+        return json({ error: "请求必须是 application/json" }, 400);
+      }
+
+      let payload: unknown;
+      try {
+        payload = await request.json();
+      } catch {
+        return json({ error: "JSON 解析失败" }, 400);
+      }
+
+      const rows = Array.isArray((payload as Record<string, unknown>)?.cues)
+        ? ((payload as Record<string, unknown>).cues as unknown[])
+        : [];
+      const cues = rows
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const row = item as Record<string, unknown>;
+          const order = Number(row.order);
+          const text = String(row.text ?? "").replace(/\s+/g, " ").trim();
+          if (!Number.isFinite(order) || !text) return null;
+          return { order: Math.round(order), text: text.slice(0, 400) };
+        })
+        .filter((item): item is { order: number; text: string } => Boolean(item))
+        .slice(0, 300);
+
+      if (cues.length === 0) {
+        return json({ error: "cues 不能为空" }, 400);
+      }
+
+      const input = [
+        "请按要求分析下面英语字幕，并返回严格 JSON：",
+        "",
+        ...cues.map((cue) => "[" + String(cue.order).padStart(3, "0") + "] " + cue.text)
+      ].join("\n");
+
+      try {
+        const raw = await env.AI.run(AI_ASS_MODEL, {
+          instructions: AI_ASS_ANALYSIS_INSTRUCTIONS,
+          input
+        });
+
+        const parsedCues = parseAiAssAnalysis(raw);
+        const parsedMap = new Map(parsedCues.map((cue) => [cue.order, cue]));
+        const merged = cues.map((cue) => {
+          const hit = parsedMap.get(cue.order);
+          return {
+            order: cue.order,
+            translation_zh: hit?.translation_zh ?? "",
+            hvc: hit?.hvc ?? [],
+            collocations: hit?.collocations ?? [],
+            expressions: hit?.expressions ?? [],
+            spoken_patterns: hit?.spoken_patterns ?? []
+          };
+        });
+
+        const hasAny = merged.some((cue) =>
+          cue.translation_zh
+          || cue.hvc.length > 0
+          || cue.collocations.length > 0
+          || cue.expressions.length > 0
+          || cue.spoken_patterns.length > 0
+        );
+        if (!hasAny) {
+          return json({ error: "AI 返回为空，未解析到有效分析结果" }, 502);
+        }
+
+        return json({
+          configs: [
+            { key: "hvc", name: "高价值词汇（HVC）", color: "&H0000FFFF" },
+            { key: "collocations", name: "固定搭配/短语动词", color: "&H0032CD32" },
+            { key: "expressions", name: "地道表达/俚语", color: "&H00FF00AA" }
+          ],
+          cues: merged
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "AI 分析调用失败";
+        return json({ error: message }, 500);
+      }
     }
 
     if (request.method === "POST" && url.pathname === "/api/transcribe") {
