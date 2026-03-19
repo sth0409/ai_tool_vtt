@@ -75,12 +75,48 @@ function extractJsonText(raw: string): string | null {
   return null;
 }
 
+function pickStringField(row: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number") return String(value);
+    if (value && typeof value === "object") {
+      const nested = collectStringValues(value).map((item) => item.trim()).filter(Boolean);
+      if (nested.length > 0) return nested[0];
+    }
+  }
+  return "";
+}
+
+function cleanTerm(raw: string): string {
+  const trimmed = String(raw || "").replace(/\s+/g, " ").trim();
+  if (!trimmed) return "";
+  const stripped = trimmed
+    .replace(/^[\s"'“”‘’()\\[\\]{}.,!?;:]+/, "")
+    .replace(/[\s"'“”‘’()\\[\\]{}.,!?;:]+$/, "");
+  return stripped.replace(/\s*[-–—:]\s*.+$/, "").trim();
+}
+
 function toStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  const list = value
-    .map((item) => String(item ?? "").replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-  return [...new Set(list)];
+  if (typeof value === "string") {
+    const cleaned = cleanTerm(value);
+    return cleaned ? [cleaned] : [];
+  }
+  if (Array.isArray(value)) {
+    const list = value
+      .flatMap((item) => toStringList(item))
+      .map((item) => cleanTerm(item))
+      .filter(Boolean);
+    return [...new Set(list)];
+  }
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const keys = ["items", "values", "list", "words", "phrases", "terms"];
+    for (const key of keys) {
+      if (obj[key]) return toStringList(obj[key]);
+    }
+  }
+  return [];
 }
 
 function normalizeAiAssCues(value: unknown): AiAssCueAnalysis[] {
@@ -91,13 +127,63 @@ function normalizeAiAssCues(value: unknown): AiAssCueAnalysis[] {
     const row = item as Record<string, unknown>;
     const order = Number(row.order);
     if (!Number.isFinite(order)) continue;
+    const translation = pickStringField(row, [
+      "translation_zh",
+      "translation",
+      "translation_cn",
+      "translation_zh_cn",
+      "translationZh",
+      "translationZH",
+      "zh",
+      "cn",
+      "chinese"
+    ]);
+    const hvc = toStringList(
+      row.hvc
+      ?? row.HVC
+      ?? row.high_value_vocab
+      ?? row.academic_vocab
+      ?? row.academic_vocabulary
+      ?? row.core_vocab
+      ?? row.core_vocabulary
+      ?? row.key_words
+      ?? row.keywords
+      ?? row.vocabulary
+    );
+    const collocations = toStringList(
+      row.collocations
+      ?? row.collocation
+      ?? row.phrasal_verbs
+      ?? row.phrasalVerbs
+      ?? row.phrases
+      ?? row.collocations_phrasal_verbs
+      ?? row.phrasal_verbs_collocations
+    );
+    const expressions = toStringList(
+      row.expressions
+      ?? row.expression
+      ?? row.idioms
+      ?? row.idiom
+      ?? row.slang
+      ?? row.idiom_expressions
+      ?? row.expressions_idioms
+    );
+    const spokenPatterns = toStringList(
+      row.spoken_patterns
+      ?? row.spokenPatterns
+      ?? row.patterns
+      ?? row.sentence_patterns
+      ?? row.sentencePatterns
+      ?? row.oral_patterns
+      ?? row.structures
+    );
     cues.push({
       order: Math.round(order),
-      translation_zh: String(row.translation_zh ?? "").trim(),
-      hvc: toStringList(row.hvc),
-      collocations: toStringList(row.collocations),
-      expressions: toStringList(row.expressions),
-      spoken_patterns: toStringList(row.spoken_patterns)
+      translation_zh: translation,
+      hvc,
+      collocations,
+      expressions,
+      spoken_patterns: spokenPatterns
     });
   }
   return cues;
@@ -535,6 +621,22 @@ const ASS_PAGE = `<!doctype html>
         color: #94a3b8;
         font-size: 12px;
       }
+      .checkbox-inline {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: #cbd5e1;
+      }
+      .checkbox-inline input {
+        width: auto;
+      }
+      .subtitle-zh {
+        display: block;
+        margin-top: 4px;
+        font-size: 0.72em;
+        color: #e2e8f0;
+      }
       .group-list { display: grid; grid-template-columns: 1fr; gap: 10px; }
       .group-card {
         border: 1px solid #334155;
@@ -710,6 +812,13 @@ I just want a guy who's good-looking and fun."></textarea>
           <input id="fontSize" type="text" value="48" />
         </div>
         <div class="field">
+          <label class="checkbox-inline"><input id="includeZhInAss" type="checkbox" /> ASS 双语（第二行中文）</label>
+        </div>
+        <div class="field">
+          <label for="zhFontScale">中文字号比例（0.5-1.0）</label>
+          <input id="zhFontScale" type="text" value="0.7" />
+        </div>
+        <div class="field">
           <label for="outlineColor">黑框色（BGR）</label>
           <input id="outlineColor" type="text" value="&H00000000" />
         </div>
@@ -816,6 +925,8 @@ I just want a guy who's good-looking and fun."></textarea>
       const outlineWidth = document.getElementById("outlineWidth");
       const subtitleOffset = document.getElementById("subtitleOffset");
       const fontSize = document.getElementById("fontSize");
+      const includeZhInAss = document.getElementById("includeZhInAss");
+      const zhFontScale = document.getElementById("zhFontScale");
       const pickPreviewVideoBtn = document.getElementById("pickPreviewVideoBtn");
       const previewVideoInput = document.getElementById("previewVideoInput");
       const previewFileInfo = document.getElementById("previewFileInfo");
@@ -882,9 +993,18 @@ I just want a guy who's good-looking and fun."></textarea>
       function toUniqueTerms(list) {
         if (!Array.isArray(list)) return [];
         const cleaned = list
-          .map((item) => String(item || "").replace(/\\s+/g, " ").trim())
+          .map((item) => cleanAiTerm(String(item || "")))
           .filter(Boolean);
         return [...new Set(cleaned)];
+      }
+
+      function cleanAiTerm(raw) {
+        const trimmed = String(raw || "").replace(/\\s+/g, " ").trim();
+        if (!trimmed) return "";
+        const stripped = trimmed
+          .replace(/^[\\s"'“”‘’()\\[\\]{}.,!?;:]+/, "")
+          .replace(/[\\s"'“”‘’()\\[\\]{}.,!?;:]+$/, "");
+        return stripped.replace(/\\s*[-–—:]\\s*.+$/, "").trim();
       }
 
       function createAiConfigs() {
@@ -1288,6 +1408,12 @@ I just want a guy who's good-looking and fun."></textarea>
         return Math.min(dynamicMax, Math.round(n));
       }
 
+      function sanitizeZhScale(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return 0.7;
+        return Math.max(0.5, Math.min(1, n));
+      }
+
       function syncOpacitySliderFromOutlineColor() {
         const opacity = getAssColorOpacity(outlineColor.value);
         outlineOpacity.value = String(opacity);
@@ -1337,7 +1463,16 @@ I just want a guy who's good-looking and fun."></textarea>
           })
           .filter(Boolean);
         const matches = collectMatches(rawText, cueEntries);
-        if (matches.length === 0) return escapeHtml(rawText).replace(/\\n/g, "<br />");
+        const zh = String(cueTranslations[String(cueOrder)] || "").trim();
+        const zhEnabled = includeZhInAss.checked && zh;
+
+        if (matches.length === 0) {
+          const base = escapeHtml(rawText).replace(/\\n/g, "<br />");
+          if (!zhEnabled) return base;
+          const scale = sanitizeZhScale(zhFontScale.value);
+          const zhHtml = '<span class="subtitle-zh" style="font-size:' + scale + 'em;">' + escapeHtml(zh) + "</span>";
+          return base + "<br />" + zhHtml;
+        }
 
         let cursor = 0;
         const parts = [];
@@ -1347,7 +1482,11 @@ I just want a guy who's good-looking and fun."></textarea>
           cursor = match.end;
         }
         parts.push(escapeHtml(rawText.slice(cursor)));
-        return parts.join("").replace(/\\n/g, "<br />");
+        const base = parts.join("").replace(/\\n/g, "<br />");
+        if (!zhEnabled) return base;
+        const scale = sanitizeZhScale(zhFontScale.value);
+        const zhHtml = '<span class="subtitle-zh" style="font-size:' + scale + 'em;">' + escapeHtml(zh) + "</span>";
+        return base + "<br />" + zhHtml;
       }
 
       function getCueAtTime(cues, currentTimeSec) {
@@ -1433,7 +1572,7 @@ I just want a guy who's good-looking and fun."></textarea>
         return Math.max(0, Math.min(safePlayResY, safePlayResY - scaled));
       }
 
-      function buildAssContent(cues, normalColor, borderColor, borderWidthValue, fontSizeValue, offsetValue, playResXValue, playResYValue) {
+      function buildAssContent(cues, normalColor, borderColor, borderWidthValue, fontSizeValue, offsetValue, playResXValue, playResYValue, includeZh, zhScaleValue, translations) {
         const sizeNum = Number(fontSizeValue);
         const safeSize = Number.isFinite(sizeNum) && sizeNum > 0 ? Math.round(sizeNum) : 48;
         const borderNum = Number(borderWidthValue);
@@ -1457,7 +1596,16 @@ I just want a guy who's good-looking and fun."></textarea>
           "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
         ];
         for (const cue of cues) {
-          const text = applyMultiHighlight(cue.text, cue.order, normalColor);
+          let text = applyMultiHighlight(cue.text, cue.order, normalColor);
+          if (includeZh) {
+            const zh = String(translations[String(cue.order)] || "").trim();
+            if (zh) {
+              const scale = sanitizeZhScale(zhScaleValue);
+              const zhSize = Math.max(10, Math.round(safeSize * scale));
+              const zhText = escapeAssText(zh).replace(/\\n/g, "\\\\N").replace(/\n/g, "\\\\N");
+              text = text + "\\\\N{\\\\fs" + String(zhSize) + "}" + zhText + "{\\\\fs" + String(safeSize) + "}";
+            }
+          }
           const decorated = "{\\\\an" + String(alignCode) + "\\\\pos(" + String(exportX) + "," + String(exportY) + ")}" + text;
           lines.push("Dialogue: 0," + toAssTime(cue.start) + "," + toAssTime(cue.end) + ",Default,,0,0,0,," + decorated);
         }
@@ -1674,6 +1822,8 @@ I just want a guy who's good-looking and fun."></textarea>
       outlineWidth.addEventListener("input", updatePreviewOverlayAndText);
       fontSize.addEventListener("input", updatePreviewOverlayAndText);
       subtitleOffset.addEventListener("input", updatePreviewOverlayAndText);
+      includeZhInAss.addEventListener("change", updatePreviewOverlayAndText);
+      zhFontScale.addEventListener("input", updatePreviewOverlayAndText);
       subtitleOverlayText.addEventListener("pointerdown", (event) => {
         if (event.button !== 0) return;
         event.preventDefault();
@@ -1693,7 +1843,20 @@ I just want a guy who's good-looking and fun."></textarea>
         const borderColor = normalizeAssColor(outlineColor.value, "&H00000000");
         const playResX = previewVideoMeta?.width || 1920;
         const playResY = previewVideoMeta?.height || 1080;
-        const ass = buildAssContent(cues, normalColor, borderColor, outlineWidth.value, fontSize.value, subtitleOffset.value, playResX, playResY);
+        const includeZh = includeZhInAss.checked;
+        const ass = buildAssContent(
+          cues,
+          normalColor,
+          borderColor,
+          outlineWidth.value,
+          fontSize.value,
+          subtitleOffset.value,
+          playResX,
+          playResY,
+          includeZh,
+          zhFontScale.value,
+          cueTranslations
+        );
         lastAssContent = ass;
         outputAss.textContent = ass;
         outputCmd.textContent = [
