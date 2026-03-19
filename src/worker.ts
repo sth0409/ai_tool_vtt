@@ -2153,14 +2153,14 @@ export default {
             if (current && cueHasAnyValue(current)) continue;
             const singleInput = buildInput([cue]);
             const singleParsed = await runOnce(AI_ASS_ANALYSIS_INSTRUCTIONS_SINGLE, singleInput, 512);
-            const singleHit = singleParsed.find((item) => Number(item?.order) === cue.order) ?? singleParsed[0];
+            const singleHit = singleParsed.find((item) => Number(item?.order) === cue.order) ?? singleParsed[0] ?? null;
             let updated = {
               order: cue.order,
-              translation_zh: singleHit.translation_zh || current?.translation_zh || "",
-              hvc: (singleHit.hvc && singleHit.hvc.length > 0) ? singleHit.hvc : (current?.hvc ?? []),
-              collocations: (singleHit.collocations && singleHit.collocations.length > 0) ? singleHit.collocations : (current?.collocations ?? []),
-              expressions: (singleHit.expressions && singleHit.expressions.length > 0) ? singleHit.expressions : (current?.expressions ?? []),
-              spoken_patterns: (singleHit.spoken_patterns && singleHit.spoken_patterns.length > 0) ? singleHit.spoken_patterns : (current?.spoken_patterns ?? [])
+              translation_zh: (singleHit?.translation_zh ?? current?.translation_zh ?? "") || "",
+              hvc: (singleHit?.hvc && singleHit.hvc.length > 0) ? singleHit.hvc : (current?.hvc ?? []),
+              collocations: (singleHit?.collocations && singleHit.collocations.length > 0) ? singleHit.collocations : (current?.collocations ?? []),
+              expressions: (singleHit?.expressions && singleHit.expressions.length > 0) ? singleHit.expressions : (current?.expressions ?? []),
+              spoken_patterns: (singleHit?.spoken_patterns && singleHit.spoken_patterns.length > 0) ? singleHit.spoken_patterns : (current?.spoken_patterns ?? [])
             };
             if (!updated.translation_zh || isPlaceholderText(updated.translation_zh)) {
               const translationOnly = await runTranslation(singleInput, 256);
