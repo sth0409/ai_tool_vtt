@@ -55,6 +55,37 @@ const AI_ASS_ANALYSIS_INSTRUCTIONS_STRICT = `你是一位专业的雅思（IELTS
     }
   ]
 }`;
+const AI_ASS_ANALYSIS_INSTRUCTIONS_SINGLE = `你是一位专业的雅思（IELTS）英语教师和词汇分析师。你将收到 1 句英文字幕，必须输出严格 JSON（不要 markdown、不要注释）。
+
+强制要求：
+1) translation_zh 必须是自然、准确的中文翻译，不能为空。
+2) 如果能判断高价值词/搭配/表达，请填写；否则留空数组。
+3) 只输出 1 个 cues 元素，order 必须与输入序号一致。
+4) 禁止使用省略号或占位符（如 "...", "N/A", "TBD"）。
+
+输出 JSON 结构（字段名必须一致）：
+{
+  "cues": [
+    {
+      "order": 1,
+      "translation_zh": "中文翻译",
+      "hvc": [],
+      "collocations": [],
+      "expressions": [],
+      "spoken_patterns": []
+    }
+  ]
+}`;
+const AI_ASS_TRANSLATION_ONLY_INSTRUCTIONS = `你是专业英译中翻译。你将收到 1 句英文字幕，请输出严格 JSON（不要 markdown、不要注释）。
+
+强制要求：
+1) 只输出 translation_zh 字段，不能为空。
+2) 禁止使用省略号或占位符（如 "...", "N/A", "TBD"）。
+
+输出 JSON 结构：
+{
+  "translation_zh": "中文翻译"
+}`;
 
 type AiAssCueAnalysis = {
   order: number;
@@ -95,6 +126,15 @@ function extractJsonText(raw: string): string | null {
   if (first >= 0 && last > first) return trimmed.slice(first, last + 1);
 
   return null;
+}
+
+function isPlaceholderText(value: string): boolean {
+  const cleaned = String(value || "").replace(/\s+/g, "").toLowerCase();
+  if (!cleaned) return true;
+  if (cleaned === "..." || cleaned === "…") return true;
+  if (cleaned === "n/a" || cleaned === "na" || cleaned === "tbd") return true;
+  if (/^\.+$/.test(cleaned)) return true;
+  return false;
 }
 
 function pickStringField(row: Record<string, unknown>, keys: string[]): string {
@@ -254,6 +294,24 @@ function findCuesPayload(value: unknown): { cues: unknown[] } | null {
     if (hit) return hit;
   }
   return null;
+}
+
+function extractTranslationText(result: Record<string, unknown>): string {
+  const direct = collectStringValues(result)
+    .map((item) => String(item || "").trim())
+    .filter((item) => item && !isPlaceholderText(item));
+  if (direct.length === 0) return "";
+  const jsonText = extractJsonText(direct[0]);
+  if (jsonText) {
+    try {
+      const parsed = JSON.parse(jsonText) as Record<string, unknown>;
+      const candidate = String(parsed.translation_zh ?? "").trim();
+      return isPlaceholderText(candidate) ? "" : candidate;
+    } catch {
+      // ignore
+    }
+  }
+  return direct[0];
 }
 
 function cueHasAnyValue(cue: AiAssCueAnalysis): boolean {
@@ -2034,20 +2092,31 @@ export default {
           ...subset.map((cue) => "[" + String(cue.order).padStart(3, "0") + "] " + cue.text)
         ].join("\n"));
 
-        const runOnce = async (instructions: string, inputText: string) => {
+        const buildPrompt = (instructions: string, inputText: string) => (
+          instructions + "\n\n" + inputText + "\n\n仅输出 JSON。"
+        );
+
+        const runOnce = async (instructions: string, inputText: string, maxTokens: number) => {
           const raw = await env.AI.run(AI_ASS_MODEL, {
-            messages: [
-              { role: "system", content: instructions },
-              { role: "user", content: inputText }
-            ],
+            prompt: buildPrompt(instructions, inputText),
             response_format: { type: "json_object" },
-            temperature: 0.2
+            temperature: 0.2,
+            max_tokens: maxTokens
           });
           return parseAiAssAnalysis(raw);
         };
+        const runTranslation = async (inputText: string, maxTokens: number) => {
+          const raw = await env.AI.run(AI_ASS_MODEL, {
+            prompt: buildPrompt(AI_ASS_TRANSLATION_ONLY_INSTRUCTIONS, inputText),
+            response_format: { type: "json_object" },
+            temperature: 0.2,
+            max_tokens: maxTokens
+          });
+          return extractTranslationText(raw);
+        };
 
         const input = buildInput(cues);
-        let parsedCues = await runOnce(AI_ASS_ANALYSIS_INSTRUCTIONS, input);
+        let parsedCues = await runOnce(AI_ASS_ANALYSIS_INSTRUCTIONS, input, 4096);
         let parsedMap = new Map(parsedCues.map((cue) => [cue.order, cue]));
         let merged = cues.map((cue) => {
           const hit = parsedMap.get(cue.order);
@@ -2062,7 +2131,7 @@ export default {
         });
 
         if (isMostlyEmpty(merged)) {
-          parsedCues = await runOnce(AI_ASS_ANALYSIS_INSTRUCTIONS_STRICT, input);
+          parsedCues = await runOnce(AI_ASS_ANALYSIS_INSTRUCTIONS_STRICT, input, 4096);
           parsedMap = new Map(parsedCues.map((cue) => [cue.order, cue]));
           merged = cues.map((cue) => {
             const hit = parsedMap.get(cue.order);
@@ -2083,10 +2152,9 @@ export default {
             const current = mergedMap.get(cue.order);
             if (current && cueHasAnyValue(current)) continue;
             const singleInput = buildInput([cue]);
-            const singleParsed = await runOnce(AI_ASS_ANALYSIS_INSTRUCTIONS_STRICT, singleInput);
+            const singleParsed = await runOnce(AI_ASS_ANALYSIS_INSTRUCTIONS_SINGLE, singleInput, 512);
             const singleHit = singleParsed.find((item) => Number(item?.order) === cue.order) ?? singleParsed[0];
-            if (!singleHit) continue;
-            const updated = {
+            let updated = {
               order: cue.order,
               translation_zh: singleHit.translation_zh || current?.translation_zh || "",
               hvc: (singleHit.hvc && singleHit.hvc.length > 0) ? singleHit.hvc : (current?.hvc ?? []),
@@ -2094,6 +2162,12 @@ export default {
               expressions: (singleHit.expressions && singleHit.expressions.length > 0) ? singleHit.expressions : (current?.expressions ?? []),
               spoken_patterns: (singleHit.spoken_patterns && singleHit.spoken_patterns.length > 0) ? singleHit.spoken_patterns : (current?.spoken_patterns ?? [])
             };
+            if (!updated.translation_zh || isPlaceholderText(updated.translation_zh)) {
+              const translationOnly = await runTranslation(singleInput, 256);
+              if (translationOnly) {
+                updated = { ...updated, translation_zh: translationOnly };
+              }
+            }
             mergedMap.set(cue.order, updated);
           }
           merged = cues.map((cue) => mergedMap.get(cue.order) ?? {
