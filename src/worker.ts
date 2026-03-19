@@ -2193,6 +2193,57 @@ export default {
           cues: merged
         });
       } catch (error) {
+        try {
+          const fallbackCues: Array<{
+            order: number;
+            translation_zh: string;
+            hvc: string[];
+            collocations: string[];
+            expressions: string[];
+            spoken_patterns: string[];
+          }> = [];
+          for (const cue of cues) {
+            const prompt = [
+              AI_ASS_TRANSLATION_ONLY_INSTRUCTIONS,
+              "",
+              "输入：",
+              "[" + String(cue.order).padStart(3, "0") + "] " + cue.text,
+              "",
+              "仅输出 JSON。"
+            ].join("\n");
+            const raw = await env.AI.run(AI_ASS_MODEL, {
+              prompt,
+              response_format: { type: "json_object" },
+              temperature: 0.2,
+              max_tokens: 256
+            });
+            const zh = extractTranslationText(raw);
+            fallbackCues.push({
+              order: cue.order,
+              translation_zh: zh,
+              hvc: [],
+              collocations: [],
+              expressions: [],
+              spoken_patterns: []
+            });
+          }
+
+          const hasTranslation = fallbackCues.some((cue) => Boolean(cue.translation_zh));
+          if (hasTranslation) {
+            return json({
+              configs: [
+                { key: "hvc", name: "高价值词汇（HVC）", color: "&H0000FFFF" },
+                { key: "collocations", name: "固定搭配/短语动词", color: "&H0032CD32" },
+                { key: "expressions", name: "地道表达/俚语", color: "&H00FF00AA" }
+              ],
+              cues: fallbackCues,
+              warning: "分析结果不稳定，已自动降级为逐句翻译兜底。"
+            });
+          }
+        } catch {
+          // ignore fallback failure and return root error below
+        }
+
         const message = error instanceof Error ? error.message : "AI 分析调用失败";
         return json({ error: message }, 500);
       }
