@@ -1464,12 +1464,12 @@ I just want a guy who's good-looking and fun."></textarea>
           .filter(Boolean);
         const matches = collectMatches(rawText, cueEntries);
         const zh = String(cueTranslations[String(cueOrder)] || "").trim();
-        const zhEnabled = includeZhInAss.checked && zh;
+        const zhEnabled = includeZhInAss && includeZhInAss.checked && zh;
 
         if (matches.length === 0) {
           const base = escapeHtml(rawText).replace(/\\n/g, "<br />");
           if (!zhEnabled) return base;
-          const scale = sanitizeZhScale(zhFontScale.value);
+          const scale = sanitizeZhScale(zhFontScale ? zhFontScale.value : 0.7);
           const zhHtml = '<span class="subtitle-zh" style="font-size:' + scale + 'em;">' + escapeHtml(zh) + "</span>";
           return base + "<br />" + zhHtml;
         }
@@ -1484,7 +1484,7 @@ I just want a guy who's good-looking and fun."></textarea>
         parts.push(escapeHtml(rawText.slice(cursor)));
         const base = parts.join("").replace(/\\n/g, "<br />");
         if (!zhEnabled) return base;
-        const scale = sanitizeZhScale(zhFontScale.value);
+        const scale = sanitizeZhScale(zhFontScale ? zhFontScale.value : 0.7);
         const zhHtml = '<span class="subtitle-zh" style="font-size:' + scale + 'em;">' + escapeHtml(zh) + "</span>";
         return base + "<br />" + zhHtml;
       }
@@ -1602,7 +1602,7 @@ I just want a guy who's good-looking and fun."></textarea>
             if (zh) {
               const scale = sanitizeZhScale(zhScaleValue);
               const zhSize = Math.max(10, Math.round(safeSize * scale));
-              const zhText = escapeAssText(zh).replace(/\\n/g, "\\\\N").replace(/\n/g, "\\\\N");
+              const zhText = escapeAssText(zh).replace(/\\r?\\n/g, "\\\\N");
               text = text + "\\\\N{\\\\fs" + String(zhSize) + "}" + zhText + "{\\\\fs" + String(safeSize) + "}";
             }
           }
@@ -1619,7 +1619,7 @@ I just want a guy who's good-looking and fun."></textarea>
         downloadAssBtn.disabled = true;
       }
 
-      prepareHighlightBtn.addEventListener("click", () => {
+      if (prepareHighlightBtn) prepareHighlightBtn.addEventListener("click", () => {
         cuesCache = parseCueBlocks(subtitleInput.value || "");
         if (cuesCache.length === 0) {
           preprocessBody.innerHTML = '<p class="preprocess-placeholder">未识别到有效字幕块，请确认格式为“时间轴 + 文本”。</p>';
@@ -1636,7 +1636,7 @@ I just want a guy who's good-looking and fun."></textarea>
         refreshPreviewText();
       });
 
-      aiAnalyzeBtn.addEventListener("click", async () => {
+      if (aiAnalyzeBtn) aiAnalyzeBtn.addEventListener("click", async () => {
         if (aiAnalyzing) return;
         const cues = parseCueBlocks(subtitleInput.value || "");
         if (cues.length === 0) {
@@ -1745,7 +1745,7 @@ I just want a guy who's good-looking and fun."></textarea>
         hideWordMenu();
       });
 
-      addConfigBtn.addEventListener("click", () => {
+      if (addConfigBtn) addConfigBtn.addEventListener("click", () => {
         configNameInput.value = "";
         configColorInput.value = "&H0000FFFF";
         syncPickerFromAssInput();
@@ -1822,8 +1822,8 @@ I just want a guy who's good-looking and fun."></textarea>
       outlineWidth.addEventListener("input", updatePreviewOverlayAndText);
       fontSize.addEventListener("input", updatePreviewOverlayAndText);
       subtitleOffset.addEventListener("input", updatePreviewOverlayAndText);
-      includeZhInAss.addEventListener("change", updatePreviewOverlayAndText);
-      zhFontScale.addEventListener("input", updatePreviewOverlayAndText);
+      if (includeZhInAss) includeZhInAss.addEventListener("change", updatePreviewOverlayAndText);
+      if (zhFontScale) zhFontScale.addEventListener("input", updatePreviewOverlayAndText);
       subtitleOverlayText.addEventListener("pointerdown", (event) => {
         if (event.button !== 0) return;
         event.preventDefault();
@@ -1843,7 +1843,7 @@ I just want a guy who's good-looking and fun."></textarea>
         const borderColor = normalizeAssColor(outlineColor.value, "&H00000000");
         const playResX = previewVideoMeta?.width || 1920;
         const playResY = previewVideoMeta?.height || 1080;
-        const includeZh = includeZhInAss.checked;
+        const includeZh = includeZhInAss ? includeZhInAss.checked : false;
         const ass = buildAssContent(
           cues,
           normalColor,
@@ -1854,7 +1854,7 @@ I just want a guy who's good-looking and fun."></textarea>
           playResX,
           playResY,
           includeZh,
-          zhFontScale.value,
+          zhFontScale ? zhFontScale.value : 0.7,
           cueTranslations
         );
         lastAssContent = ass;
