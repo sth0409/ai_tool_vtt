@@ -37,6 +37,11 @@ const AI_ASS_ANALYSIS_INSTRUCTIONS = `你是一位专业的雅思（IELTS）英�
 const AI_ASS_ANALYSIS_INSTRUCTIONS_STRICT = `你是一位专业的雅思（IELTS）英语教师和词汇分析师。你将收到带序号的英语字幕句子，请输出严格 JSON（不要 markdown、不要注释）。
 
 强制要求（必须遵守）：
+1) 高价值词汇（HVC）：提取雅思核心词汇或难度 B2-C1 的词。
+2) 固定搭配/短语动词（Collocations/Phrasal Verbs）：提取两个及以上单词组成、语义不完全字面化的搭配。
+3) 地道表达/俚语（Idioms/Expressions）：提取提升口语流利度的表达。
+4) 口语常用句型（Spoken Patterns）：提取适合口语复用的句型（如 "I'm hooked on ..."）。
+5) 每句话都要给出自然、准确的中文翻译。
 1) 每一句必须给出自然、准确的中文翻译 translation_zh（不能为空）。
 2) 不允许使用省略号、占位符、模板字样。
 3) 所有字段必须存在，数组可为空，但 translation_zh 不能空。
@@ -58,6 +63,11 @@ const AI_ASS_ANALYSIS_INSTRUCTIONS_STRICT = `你是一位专业的雅思（IELTS
 const AI_ASS_ANALYSIS_INSTRUCTIONS_SINGLE = `你是一位专业的雅思（IELTS）英语教师和词汇分析师。你将收到 1 句英文字幕，必须输出严格 JSON（不要 markdown、不要注释）。
 
 强制要求：
+1) 高价值词汇（HVC）：提取雅思核心词汇或难度 B2-C1 的词。
+2) 固定搭配/短语动词（Collocations/Phrasal Verbs）：提取两个及以上单词组成、语义不完全字面化的搭配。
+3) 地道表达/俚语（Idioms/Expressions）：提取提升口语流利度的表达。
+4) 口语常用句型（Spoken Patterns）：提取适合口语复用的句型（如 "I'm hooked on ..."）。
+5) 每句话都要给出自然、准确的中文翻译。
 1) translation_zh 必须是自然、准确的中文翻译，不能为空。
 2) 如果能判断高价值词/搭配/表达，请填写；否则留空数组。
 3) 只输出 1 个 cues 元素，order 必须与输入序号一致。
@@ -741,6 +751,22 @@ const ASS_PAGE = `<!doctype html>
         color: #94a3b8;
         font-size: 12px;
       }
+      .debug-box {
+        margin-top: 8px;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 10px;
+        background: #000814;
+        max-height: 220px;
+        overflow: auto;
+      }
+      .debug-box[hidden] { display: none; }
+      .debug-box pre {
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+      }
       .checkbox-inline {
         display: flex;
         align-items: center;
@@ -898,8 +924,10 @@ I just want a guy who's good-looking and fun."></textarea>
         <button id="prepareHighlightBtn" type="button">高亮编辑操作</button>
         <button id="aiAnalyzeBtn" type="button">AI 自动分析（3类高亮+翻译）</button>
         <button id="addConfigBtn" type="button" class="subtle-btn">增加高亮配置</button>
+        <label class="checkbox-inline"><input id="aiDebugToggle" type="checkbox" /> 调试模式（显示AI原始返回摘要）</label>
       </div>
       <div id="aiStatus" class="ai-status"></div>
+      <div id="aiDebugBox" class="debug-box" hidden><pre id="aiDebugOutput"></pre></div>
 
       <div class="field">
         <label>当前高亮配置</label>
@@ -1024,6 +1052,9 @@ I just want a guy who's good-looking and fun."></textarea>
       const prepareHighlightBtn = document.getElementById("prepareHighlightBtn");
       const aiAnalyzeBtn = document.getElementById("aiAnalyzeBtn");
       const aiStatus = document.getElementById("aiStatus");
+      const aiDebugToggle = document.getElementById("aiDebugToggle");
+      const aiDebugBox = document.getElementById("aiDebugBox");
+      const aiDebugOutput = document.getElementById("aiDebugOutput");
       const addConfigBtn = document.getElementById("addConfigBtn");
       const configList = document.getElementById("configList");
       const preprocessBody = document.getElementById("preprocessBody");
@@ -1108,6 +1139,23 @@ I just want a guy who's good-looking and fun."></textarea>
         aiAnalyzing = active;
         aiAnalyzeBtn.disabled = active;
         aiAnalyzeBtn.textContent = active ? "AI 分析中..." : "AI 自动分析（3类高亮+翻译）";
+      }
+
+      function renderAiDebug(payload) {
+        if (!aiDebugBox || !aiDebugOutput) return;
+        if (!payload) {
+          aiDebugBox.hidden = true;
+          aiDebugOutput.textContent = "";
+          return;
+        }
+        let text = "";
+        try {
+          text = JSON.stringify(payload, null, 2);
+        } catch {
+          text = String(payload);
+        }
+        aiDebugOutput.textContent = text;
+        aiDebugBox.hidden = false;
       }
 
       function toUniqueTerms(list) {
@@ -1769,11 +1817,13 @@ I just want a guy who's good-looking and fun."></textarea>
         }));
         setAiAnalyzingState(true);
         setAiStatus("正在调用 AI：生成 3 类高亮配置并逐句翻译...", false);
+        renderAiDebug(null);
         try {
+          const debug = Boolean(aiDebugToggle && aiDebugToggle.checked);
           const response = await fetch("/api/ass/ai-analyze", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ cues: requestCues })
+            body: JSON.stringify({ cues: requestCues, debug })
           });
           const raw = await response.text();
           let data = null;
@@ -1783,12 +1833,15 @@ I just want a guy who's good-looking and fun."></textarea>
             throw new Error("AI 接口返回了不可解析的数据。");
           }
           if (!response.ok) {
+            if (data?.debug) renderAiDebug(data.debug);
             throw new Error(String(data?.error || "AI 分析失败"));
           }
           const aiCues = Array.isArray(data?.cues) ? data.cues : [];
           if (aiCues.length === 0) {
+            if (data?.debug) renderAiDebug(data.debug);
             throw new Error("AI 没有返回有效分析结果，请重试。");
           }
+          if (data?.debug) renderAiDebug(data.debug);
 
           cuesCache = cues;
           applyAiAnalysis(cues, aiCues);
@@ -2033,6 +2086,22 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
+function toDebugPreview(value: unknown, limit = 2400): string {
+  let text = "";
+  if (typeof value === "string") {
+    text = value;
+  } else {
+    try {
+      text = JSON.stringify(value);
+    } catch {
+      text = String(value);
+    }
+  }
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (compact.length <= limit) return compact;
+  return compact.slice(0, limit) + ` ... [truncated ${compact.length - limit} chars]`;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -2084,6 +2153,8 @@ export default {
       if (cues.length === 0) {
         return json({ error: "cues 不能为空" }, 400);
       }
+      const debugEnabled = Boolean((payload as Record<string, unknown>)?.debug);
+      const debugTrace: Array<Record<string, unknown>> = [];
 
       try {
         const buildInput = (subset: { order: number; text: string }[]) => ([
@@ -2096,27 +2167,44 @@ export default {
           instructions + "\n\n" + inputText + "\n\n仅输出 JSON。"
         );
 
-        const runOnce = async (instructions: string, inputText: string, maxTokens: number) => {
+        const runOnce = async (stage: string, instructions: string, inputText: string, maxTokens: number) => {
           const raw = await env.AI.run(AI_ASS_MODEL, {
             prompt: buildPrompt(instructions, inputText),
             response_format: { type: "json_object" },
             temperature: 0.2,
             max_tokens: maxTokens
           });
-          return parseAiAssAnalysis(raw);
+          const parsed = parseAiAssAnalysis(raw);
+          if (debugEnabled) {
+            debugTrace.push({
+              stage,
+              parsed_count: parsed.length,
+              non_empty_count: parsed.filter((cue) => cueHasAnyValue(cue)).length,
+              raw_preview: toDebugPreview(raw)
+            });
+          }
+          return parsed;
         };
-        const runTranslation = async (inputText: string, maxTokens: number) => {
+        const runTranslation = async (stage: string, inputText: string, maxTokens: number) => {
           const raw = await env.AI.run(AI_ASS_MODEL, {
             prompt: buildPrompt(AI_ASS_TRANSLATION_ONLY_INSTRUCTIONS, inputText),
             response_format: { type: "json_object" },
             temperature: 0.2,
             max_tokens: maxTokens
           });
-          return extractTranslationText(raw);
+          const translation = extractTranslationText(raw);
+          if (debugEnabled) {
+            debugTrace.push({
+              stage,
+              translation_ok: Boolean(translation),
+              raw_preview: toDebugPreview(raw)
+            });
+          }
+          return translation;
         };
 
         const input = buildInput(cues);
-        let parsedCues = await runOnce(AI_ASS_ANALYSIS_INSTRUCTIONS, input, 4096);
+        let parsedCues = await runOnce("batch_initial", AI_ASS_ANALYSIS_INSTRUCTIONS, input, 4096);
         let parsedMap = new Map(parsedCues.map((cue) => [cue.order, cue]));
         let merged = cues.map((cue) => {
           const hit = parsedMap.get(cue.order);
@@ -2130,8 +2218,8 @@ export default {
           };
         });
 
-        if (isMostlyEmpty(merged)) {
-          parsedCues = await runOnce(AI_ASS_ANALYSIS_INSTRUCTIONS_STRICT, input, 4096);
+        if (isMostlyEmpty(merged)) { 
+          parsedCues = await runOnce("batch_strict", AI_ASS_ANALYSIS_INSTRUCTIONS_STRICT, input, 4096);
           parsedMap = new Map(parsedCues.map((cue) => [cue.order, cue]));
           merged = cues.map((cue) => {
             const hit = parsedMap.get(cue.order);
@@ -2152,7 +2240,7 @@ export default {
             const current = mergedMap.get(cue.order);
             if (current && cueHasAnyValue(current)) continue;
             const singleInput = buildInput([cue]);
-            const singleParsed = await runOnce(AI_ASS_ANALYSIS_INSTRUCTIONS_SINGLE, singleInput, 512);
+            const singleParsed = await runOnce("single_" + cue.order, AI_ASS_ANALYSIS_INSTRUCTIONS_SINGLE, singleInput, 512);
             const singleHit = singleParsed.find((item) => Number(item?.order) === cue.order) ?? singleParsed[0] ?? null;
             let updated = {
               order: cue.order,
@@ -2163,7 +2251,7 @@ export default {
               spoken_patterns: (singleHit?.spoken_patterns && singleHit.spoken_patterns.length > 0) ? singleHit.spoken_patterns : (current?.spoken_patterns ?? [])
             };
             if (!updated.translation_zh || isPlaceholderText(updated.translation_zh)) {
-              const translationOnly = await runTranslation(singleInput, 256);
+              const translationOnly = await runTranslation("translation_only_" + cue.order, singleInput, 256);
               if (translationOnly) {
                 updated = { ...updated, translation_zh: translationOnly };
               }
@@ -2181,7 +2269,10 @@ export default {
         }
 
         if (isMostlyEmpty(merged, 0.9)) {
-          return json({ error: "AI 返回为空或占位符过多，请重试" }, 502);
+          return json({
+            error: "AI 返回为空或占位符过多，请重试",
+            ...(debugEnabled ? { debug: { trace: debugTrace, merged_preview: toDebugPreview(merged, 1200) } } : {})
+          }, 502);
         }
 
         return json({
@@ -2190,7 +2281,8 @@ export default {
             { key: "collocations", name: "固定搭配/短语动词", color: "&H0032CD32" },
             { key: "expressions", name: "地道表达/俚语", color: "&H00FF00AA" }
           ],
-          cues: merged
+          cues: merged,
+          ...(debugEnabled ? { debug: { trace: debugTrace, merged_preview: toDebugPreview(merged, 1200) } } : {})
         });
       } catch (error) {
         try {
@@ -2218,6 +2310,13 @@ export default {
               max_tokens: 256
             });
             const zh = extractTranslationText(raw);
+            if (debugEnabled) {
+              debugTrace.push({
+                stage: "fallback_translation_" + cue.order,
+                translation_ok: Boolean(zh),
+                raw_preview: toDebugPreview(raw)
+              });
+            }
             fallbackCues.push({
               order: cue.order,
               translation_zh: zh,
@@ -2237,7 +2336,8 @@ export default {
                 { key: "expressions", name: "地道表达/俚语", color: "&H00FF00AA" }
               ],
               cues: fallbackCues,
-              warning: "分析结果不稳定，已自动降级为逐句翻译兜底。"
+              warning: "分析结果不稳定，已自动降级为逐句翻译兜底。",
+              ...(debugEnabled ? { debug: { trace: debugTrace, merged_preview: toDebugPreview(fallbackCues, 1200) } } : {})
             });
           }
         } catch {
@@ -2245,7 +2345,10 @@ export default {
         }
 
         const message = error instanceof Error ? error.message : "AI 分析调用失败";
-        return json({ error: message }, 500);
+        return json({
+          error: message,
+          ...(debugEnabled ? { debug: { trace: debugTrace } } : {})
+        }, 500);
       }
     }
 
