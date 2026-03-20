@@ -1221,7 +1221,7 @@ I just want a guy who's good-looking and fun."></textarea>
         return [
           { id: "cfg-ai-hvc", key: "hvc", name: "高价值词汇（HVC）", color: "&H0000FFFF" },
           { id: "cfg-ai-collocations", key: "collocations", name: "固定搭配/短语动词", color: "&H0032CD32" },
-          { id: "cfg-ai-expressions", key: "expressions", name: "地道表达/俚语", color: "&H00FF00AA" }
+          { id: "cfg-ai-spoken-patterns", key: "spoken_patterns", name: "口语常用句型", color: "&H00FF00AA" }
         ];
       }
 
@@ -1235,13 +1235,17 @@ I just want a guy who's good-looking and fun."></textarea>
         const aiConfigs = createAiConfigs();
         highlightConfigs = aiConfigs.map((cfg) => ({ id: cfg.id, name: cfg.name, color: cfg.color }));
         resetAiData();
-
-        const assignmentIndex = new Set();
         const keyByConfig = {
           hvc: "cfg-ai-hvc",
           collocations: "cfg-ai-collocations",
-          expressions: "cfg-ai-expressions"
+          spoken_patterns: "cfg-ai-spoken-patterns"
         };
+        const priorityByKey = {
+          hvc: 3,
+          collocations: 2,
+          spoken_patterns: 1
+        };
+        const bestByCueNorm = new Map();
 
         for (const row of aiCues) {
           const order = Number(row?.order);
@@ -1255,19 +1259,21 @@ I just want a guy who's good-looking and fun."></textarea>
           const bucketList = [
             { key: "hvc", terms: toUniqueTerms(row?.hvc) },
             { key: "collocations", terms: toUniqueTerms(row?.collocations) },
-            { key: "expressions", terms: [...toUniqueTerms(row?.expressions), ...toUniqueTerms(row?.spoken_patterns)] }
+            { key: "spoken_patterns", terms: [...toUniqueTerms(row?.spoken_patterns), ...toUniqueTerms(row?.expressions)] }
           ];
 
           for (const bucket of bucketList) {
             const configId = keyByConfig[bucket.key];
             if (!configId) continue;
+            const priority = priorityByKey[bucket.key] || 0;
             for (const term of bucket.terms) {
               const norm = normalizeWord(term);
               if (!norm) continue;
-              const fingerprint = String(order) + "::" + configId + "::" + norm;
-              if (assignmentIndex.has(fingerprint)) continue;
-              assignmentIndex.add(fingerprint);
-              assignments.push({
+              const dedupeKey = String(order) + "::" + norm;
+              const previous = bestByCueNorm.get(dedupeKey);
+              if (previous && previous.priority >= priority) continue;
+              bestByCueNorm.set(dedupeKey, {
+                priority,
                 cueOrder: order,
                 cueIndexLabel: cue.indexLabel,
                 word: term,
@@ -1277,6 +1283,16 @@ I just want a guy who's good-looking and fun."></textarea>
             }
           }
         }
+
+        assignments = Array.from(bestByCueNorm.values())
+          .sort((a, b) => (a.cueOrder - b.cueOrder) || (b.priority - a.priority))
+          .map((item) => ({
+            cueOrder: item.cueOrder,
+            cueIndexLabel: item.cueIndexLabel,
+            word: item.word,
+            norm: item.norm,
+            configId: item.configId
+          }));
       }
 
       function parseTimeToSeconds(timeWithMs) {
@@ -2321,7 +2337,7 @@ export default {
           configs: [
             { key: "hvc", name: "高价值词汇（HVC）", color: "&H0000FFFF" },
             { key: "collocations", name: "固定搭配/短语动词", color: "&H0032CD32" },
-            { key: "expressions", name: "地道表达/俚语", color: "&H00FF00AA" }
+            { key: "spoken_patterns", name: "口语常用句型", color: "&H00FF00AA" }
           ],
           cues: merged,
           ...(debugEnabled ? { debug: { trace: debugTrace, merged_preview: toDebugPreview(merged, 1200) } } : {})
@@ -2375,7 +2391,7 @@ export default {
               configs: [
                 { key: "hvc", name: "高价值词汇（HVC）", color: "&H0000FFFF" },
                 { key: "collocations", name: "固定搭配/短语动词", color: "&H0032CD32" },
-                { key: "expressions", name: "地道表达/俚语", color: "&H00FF00AA" }
+                { key: "spoken_patterns", name: "口语常用句型", color: "&H00FF00AA" }
               ],
               cues: fallbackCues,
               warning: "分析结果不稳定，已自动降级为逐句翻译兜底。",
