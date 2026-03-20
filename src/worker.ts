@@ -2650,45 +2650,54 @@ export default {
       const { cues, debugEnabled } = parseAiAssRequestPayload(payload);
       if (cues.length === 0) return json({ error: "cues 不能为空" }, 400);
 
-      const input = [
-        "请按要求逐句翻译下面英语字幕，并返回严格 JSON：",
-        "",
-        ...cues.map((cue) => "[" + String(cue.order).padStart(3, "0") + "] " + cue.text)
-      ].join("\n");
-
       try {
         const debugTrace: Array<Record<string, unknown>> = [];
-        const raw = await env.AI.run(AI_ASS_MODEL, {
-          prompt: AI_ASS_TRANSLATE_BATCH_INSTRUCTIONS + "\n\n" + input + "\n\n仅输出 JSON。",
-          response_format: { type: "json_object" },
-          temperature: 0.2,
-          max_tokens: 4096
-        });
-        const parsed = parseAiAssAnalysis(raw);
-        if (debugEnabled) debugTrace.push({ stage: "batch_translation", raw_preview: toDebugPreview(compactAiRawForDebug(raw), 900), parsed_count: parsed.length });
-        const byOrder = new Map(parsed.map((cue) => [cue.order, cue]));
-        const merged = [];
+        const merged: Array<{
+          order: number;
+          translation_zh: string;
+          hvc: string[];
+          collocations: string[];
+          expressions: string[];
+          spoken_patterns: string[];
+        }> = [];
+        const failedOrders: number[] = [];
+
         for (const cue of cues) {
-          const hit = byOrder.get(cue.order);
-          let zh = String(hit?.translation_zh ?? "").trim();
-          if (!zh || isPlaceholderText(zh)) {
+          const runSingle = async (attempt: "first" | "retry"): Promise<string> => {
             const singlePrompt = [
               AI_ASS_TRANSLATION_ONLY_INSTRUCTIONS,
               "",
-              "输入：",
-              "[" + String(cue.order).padStart(3, "0") + "] " + cue.text,
+              "待翻译英文：",
+              cue.text,
               "",
-              "仅输出 JSON。"
+              "只输出 JSON，不要输出任何解释。"
             ].join("\n");
             const singleRaw = await env.AI.run(AI_ASS_MODEL, {
               prompt: singlePrompt,
               response_format: { type: "json_object" },
-              temperature: 0.2,
+              temperature: attempt === "first" ? 0.2 : 0,
               max_tokens: 256
             });
-            zh = extractTranslationText(singleRaw);
-            if (debugEnabled) debugTrace.push({ stage: "single_translation_" + cue.order, ok: Boolean(zh), raw_preview: toDebugPreview(compactAiRawForDebug(singleRaw), 900) });
+            const zh = extractTranslationText(singleRaw);
+            if (debugEnabled) {
+              debugTrace.push({
+                stage: "single_translation_" + cue.order + "_" + attempt,
+                ok: Boolean(zh),
+                raw_preview: toDebugPreview(compactAiRawForDebug(singleRaw), 900)
+              });
+            }
+            return zh;
+          };
+
+          let zh = await runSingle("first");
+          if (!zh || isPlaceholderText(zh)) {
+            zh = await runSingle("retry");
           }
+          if (!zh || isPlaceholderText(zh)) {
+            failedOrders.push(cue.order);
+            zh = "";
+          }
+
           merged.push({
             order: cue.order,
             translation_zh: zh,
@@ -2709,6 +2718,7 @@ export default {
 
         return json({
           cues: merged,
+          ...(failedOrders.length > 0 ? { warning: "部分句子翻译失败", failed_orders: failedOrders } : {}),
           ...(debugEnabled ? { debug: { trace: debugTrace, merged_preview: toDebugPreview(merged, 1200) } } : {})
         });
       } catch (error) {
