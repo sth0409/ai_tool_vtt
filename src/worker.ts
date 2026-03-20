@@ -223,6 +223,84 @@ function extractJsonText(raw: string): string | null {
   return null;
 }
 
+function extractBalancedJsonObjects(raw: string, maxCount = 8): string[] {
+  const text = String(raw || "");
+  if (!text) return [];
+  const blocks: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      if (depth === 0) start = i;
+      depth += 1;
+      continue;
+    }
+    if (ch === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        blocks.push(text.slice(start, i + 1));
+        start = -1;
+        if (blocks.length >= maxCount) break;
+      }
+    }
+  }
+
+  return blocks;
+}
+
+function collectJsonCandidatesFromText(raw: string): string[] {
+  const text = String(raw || "").trim();
+  if (!text) return [];
+  const out: string[] = [];
+
+  const push = (value: string | null) => {
+    const normalized = String(value || "").trim();
+    if (!normalized) return;
+    if (!out.includes(normalized)) out.push(normalized);
+  };
+
+  push(extractJsonText(text));
+  for (const block of extractBalancedJsonObjects(text)) push(block);
+
+  try {
+    const maybeUnwrapped = JSON.parse(text) as unknown;
+    if (typeof maybeUnwrapped === "string") {
+      const decoded = maybeUnwrapped.trim();
+      if (decoded && decoded !== text) {
+        push(extractJsonText(decoded));
+        for (const block of extractBalancedJsonObjects(decoded)) push(block);
+      }
+    }
+  } catch {
+    // ignore non-JSON text
+  }
+
+  return out;
+}
+
 function isPlaceholderText(value: string): boolean {
   const cleaned = String(value || "").replace(/\s+/g, "").toLowerCase();
   if (!cleaned) return true;
@@ -391,29 +469,58 @@ function normalizeAiAssCues(value: unknown): AiAssCueAnalysis[] {
 }
 
 function parseAiAssAnalysis(result: Record<string, unknown>): AiAssCueAnalysis[] {
-  if (Array.isArray(result.cues)) {
-    return normalizeAiAssCues(result.cues);
-  }
+  const parseFromUnknown = (value: unknown, depth = 0): AiAssCueAnalysis[] => {
+    if (depth > 4 || value == null) return [];
 
-  const nestedPayload = findCuesPayload(result);
-  if (nestedPayload && Array.isArray(nestedPayload.cues)) {
-    return normalizeAiAssCues(nestedPayload.cues);
-  }
-
-  const candidates = collectStringValues(result);
-  for (const text of candidates) {
-    const jsonText = extractJsonText(text);
-    if (!jsonText) continue;
-    try {
-      const parsed = JSON.parse(jsonText) as Record<string, unknown>;
-      const cues = normalizeAiAssCues(parsed.cues);
-      if (cues.length > 0) return cues;
-    } catch {
-      // ignore parse failure and try next candidate
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const hit = parseFromUnknown(item, depth + 1);
+        if (hit.length > 0) return hit;
+      }
+      return [];
     }
-  }
 
-  return [];
+    if (typeof value === "string") {
+      const candidates = collectJsonCandidatesFromText(value);
+      for (const candidate of candidates) {
+        try {
+          const parsed = JSON.parse(candidate) as unknown;
+          const hit = parseFromUnknown(parsed, depth + 1);
+          if (hit.length > 0) return hit;
+        } catch {
+          // ignore and continue
+        }
+      }
+      return [];
+    }
+
+    if (typeof value !== "object") return [];
+    const row = value as Record<string, unknown>;
+
+    if (Array.isArray(row.cues)) {
+      const normalized = normalizeAiAssCues(row.cues);
+      if (normalized.length > 0) return normalized;
+    }
+    const nestedPayload = findCuesPayload(row);
+    if (nestedPayload?.cues) {
+      const normalized = normalizeAiAssCues(nestedPayload.cues);
+      if (normalized.length > 0) return normalized;
+    }
+
+    const priorityKeys = ["response", "output_text", "text", "content", "generated_text", "choices"];
+    for (const key of priorityKeys) {
+      const hit = parseFromUnknown(row[key], depth + 1);
+      if (hit.length > 0) return hit;
+    }
+
+    for (const child of Object.values(row)) {
+      const hit = parseFromUnknown(child, depth + 1);
+      if (hit.length > 0) return hit;
+    }
+    return [];
+  };
+
+  return parseFromUnknown(result);
 }
 
 function findCuesPayload(value: unknown): { cues: unknown[] } | null {
@@ -2342,6 +2449,32 @@ function toDebugPreview(value: unknown, limit = 2400): string {
   return compact.slice(0, limit) + ` ... [truncated ${compact.length - limit} chars]`;
 }
 
+function compactAiRawForDebug(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object") {
+    return { type: typeof value, preview: toDebugPreview(value, 280) };
+  }
+  const row = value as Record<string, unknown>;
+  const choices = Array.isArray(row.choices) ? row.choices : [];
+  const compactChoices = choices.slice(0, 2).map((item) => {
+    if (!item || typeof item !== "object") {
+      return { preview: toDebugPreview(item, 220) };
+    }
+    const choice = item as Record<string, unknown>;
+    return {
+      index: Number(choice.index ?? 0),
+      finish_reason: String(choice.finish_reason ?? choice.stop_reason ?? ""),
+      text_preview: toDebugPreview(choice.text ?? choice.output_text ?? "", 280)
+    };
+  });
+  return {
+    id: String(row.id ?? ""),
+    object: String(row.object ?? ""),
+    model: String(row.model ?? ""),
+    response_preview: toDebugPreview(row.response ?? row.output_text ?? row.text ?? "", 280),
+    choices: compactChoices
+  };
+}
+
 function parseAiAssRequestPayload(payload: unknown): {
   cues: Array<{ order: number; text: string }>;
   debugEnabled: boolean;
@@ -2419,7 +2552,7 @@ export default {
               stage,
               parsed_count: parsed.length,
               classified_count: parsed.filter((cue) => cue.hvc.length > 0 || cue.collocations.length > 0 || cue.spoken_patterns.length > 0 || cue.expressions.length > 0).length,
-              raw_preview: toDebugPreview(raw)
+              raw_preview: toDebugPreview(compactAiRawForDebug(raw), 900)
             });
           }
           return parsed;
@@ -2532,7 +2665,7 @@ export default {
           max_tokens: 4096
         });
         const parsed = parseAiAssAnalysis(raw);
-        if (debugEnabled) debugTrace.push({ stage: "batch_translation", raw_preview: toDebugPreview(raw), parsed_count: parsed.length });
+        if (debugEnabled) debugTrace.push({ stage: "batch_translation", raw_preview: toDebugPreview(compactAiRawForDebug(raw), 900), parsed_count: parsed.length });
         const byOrder = new Map(parsed.map((cue) => [cue.order, cue]));
         const merged = [];
         for (const cue of cues) {
@@ -2554,7 +2687,7 @@ export default {
               max_tokens: 256
             });
             zh = extractTranslationText(singleRaw);
-            if (debugEnabled) debugTrace.push({ stage: "single_translation_" + cue.order, ok: Boolean(zh), raw_preview: toDebugPreview(singleRaw) });
+            if (debugEnabled) debugTrace.push({ stage: "single_translation_" + cue.order, ok: Boolean(zh), raw_preview: toDebugPreview(compactAiRawForDebug(singleRaw), 900) });
           }
           merged.push({
             order: cue.order,
@@ -2642,7 +2775,7 @@ export default {
               stage,
               parsed_count: parsed.length,
               non_empty_count: parsed.filter((cue) => cueHasAnyValue(cue)).length,
-              raw_preview: toDebugPreview(raw)
+              raw_preview: toDebugPreview(compactAiRawForDebug(raw), 900)
             });
           }
           return parsed;
@@ -2659,7 +2792,7 @@ export default {
             debugTrace.push({
               stage,
               translation_ok: Boolean(translation),
-              raw_preview: toDebugPreview(raw)
+              raw_preview: toDebugPreview(compactAiRawForDebug(raw), 900)
             });
           }
           return translation;
@@ -2776,7 +2909,7 @@ export default {
               debugTrace.push({
                 stage: "fallback_translation_" + cue.order,
                 translation_ok: Boolean(zh),
-                raw_preview: toDebugPreview(raw)
+                raw_preview: toDebugPreview(compactAiRawForDebug(raw), 900)
               });
             }
             fallbackCues.push({
