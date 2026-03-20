@@ -1620,6 +1620,13 @@ I just want a guy who's good-looking and fun."></textarea>
         return highlightConfigs.find((item) => item.id === id) || null;
       }
 
+      function getConfigPriority(configId) {
+        if (configId === "cfg-ai-hvc") return 30;
+        if (configId === "cfg-ai-collocations") return 20;
+        if (configId === "cfg-ai-spoken-patterns") return 10;
+        return 0;
+      }
+
       function collectMatches(text, entries) {
         const source = String(text || "");
         const all = [];
@@ -1636,11 +1643,14 @@ I just want a guy who's good-looking and fun."></textarea>
               hitText: m[0],
               configId: entry.configId,
               color: entry.color,
-              name: entry.name
+              name: entry.name,
+              priority: Number(entry.priority || 0)
             });
           }
         }
-        all.sort((a, b) => (a.start - b.start) || ((b.end - b.start) - (a.end - a.start)));
+        // Resolve overlap by config priority first (HVC > collocations > spoken patterns),
+        // then prefer longer match at same priority.
+        all.sort((a, b) => (b.priority - a.priority) || ((b.end - b.start) - (a.end - a.start)) || (a.start - b.start));
 
         const accepted = [];
         const occupied = new Array(source.length).fill(false);
@@ -1669,7 +1679,13 @@ I just want a guy who's good-looking and fun."></textarea>
         const current = getCueAssignments(cueOrder).map((item) => {
           const cfg = getConfigById(item.configId);
           if (!cfg) return null;
-          return { word: item.word, configId: item.configId, color: cfg.color, name: cfg.name };
+          return {
+            word: item.word,
+            configId: item.configId,
+            color: cfg.color,
+            name: cfg.name,
+            priority: getConfigPriority(item.configId)
+          };
         }).filter(Boolean);
 
         const matches = collectMatches(text, current);
