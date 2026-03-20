@@ -228,8 +228,52 @@ function isPlaceholderText(value: string): boolean {
   if (!cleaned) return true;
   if (cleaned === "..." || cleaned === "…") return true;
   if (cleaned === "n/a" || cleaned === "na" || cleaned === "tbd") return true;
+  if (/^cmpl-[a-z0-9]{16,}$/i.test(cleaned)) return true;
   if (/^\.+$/.test(cleaned)) return true;
   return false;
+}
+
+function decodeJsonStringLiteral(raw: string): string {
+  try {
+    return JSON.parse(`"${raw}"`);
+  } catch {
+    return raw;
+  }
+}
+
+function extractTranslationFromText(rawText: string): string {
+  const text = String(rawText || "").trim();
+  if (!text) return "";
+
+  const fullJson = extractJsonText(text);
+  if (fullJson) {
+    try {
+      const parsed = JSON.parse(fullJson) as Record<string, unknown>;
+      const direct = findTranslationField(parsed);
+      if (direct && !isPlaceholderText(direct)) return direct;
+    } catch {
+      // ignore and continue
+    }
+  }
+
+  const objectMatches = text.match(/\{[\s\S]*?\}/g) || [];
+  for (const block of objectMatches) {
+    try {
+      const parsed = JSON.parse(block) as Record<string, unknown>;
+      const direct = findTranslationField(parsed);
+      if (direct && !isPlaceholderText(direct)) return direct;
+    } catch {
+      // ignore parse failure for this block
+    }
+  }
+
+  const m = text.match(/"translation_zh"\s*:\s*"((?:\\.|[^"\\])*)"/i);
+  if (m?.[1]) {
+    const decoded = decodeJsonStringLiteral(m[1]).trim();
+    if (decoded && !isPlaceholderText(decoded)) return decoded;
+  }
+
+  return "";
 }
 
 function pickStringField(row: Record<string, unknown>, keys: string[]): string {
@@ -424,21 +468,28 @@ function extractTranslationText(result: Record<string, unknown>): string {
   const directField = findTranslationField(result);
   if (directField) return directField;
 
+  const choices = Array.isArray(result.choices) ? result.choices : [];
+  for (const choice of choices) {
+    if (!choice || typeof choice !== "object") continue;
+    const text = String((choice as Record<string, unknown>).text ?? "").trim();
+    const hit = extractTranslationFromText(text);
+    if (hit) return hit;
+  }
+
+  const outputText = String(result.output_text ?? result.text ?? "").trim();
+  if (outputText) {
+    const hit = extractTranslationFromText(outputText);
+    if (hit) return hit;
+  }
+
   const direct = collectStringValues(result)
     .map((item) => String(item || "").trim())
     .filter((item) => item && !isPlaceholderText(item));
-  if (direct.length === 0) return "";
-  const jsonText = extractJsonText(direct[0]);
-  if (jsonText) {
-    try {
-      const parsed = JSON.parse(jsonText) as Record<string, unknown>;
-      const candidate = String(parsed.translation_zh ?? "").trim();
-      return isPlaceholderText(candidate) ? "" : candidate;
-    } catch {
-      // ignore
-    }
+  for (const candidateText of direct) {
+    const hit = extractTranslationFromText(candidateText);
+    if (hit) return hit;
   }
-  return direct[0];
+  return "";
 }
 
 function cueHasAnyValue(cue: AiAssCueAnalysis): boolean {
@@ -2354,15 +2405,35 @@ export default {
       ].join("\n");
 
       try {
-        const raw = await env.AI.run(AI_ASS_MODEL, {
-          prompt: AI_ASS_CLASSIFY_ONLY_INSTRUCTIONS + "\n\n" + input + "\n\n仅输出 JSON。",
-          response_format: { type: "json_object" },
-          temperature: 0.2,
-          max_tokens: 4096
-        });
-        const parsed = parseAiAssAnalysis(raw);
+        const debugTrace: Array<Record<string, unknown>> = [];
+        const runClassify = async (stage: string, inputText: string, maxTokens: number) => {
+          const raw = await env.AI.run(AI_ASS_MODEL, {
+            prompt: AI_ASS_CLASSIFY_ONLY_INSTRUCTIONS + "\n\n" + inputText + "\n\n仅输出 JSON。",
+            response_format: { type: "json_object" },
+            temperature: 0.2,
+            max_tokens: maxTokens
+          });
+          const parsed = parseAiAssAnalysis(raw);
+          if (debugEnabled) {
+            debugTrace.push({
+              stage,
+              parsed_count: parsed.length,
+              classified_count: parsed.filter((cue) => cue.hvc.length > 0 || cue.collocations.length > 0 || cue.spoken_patterns.length > 0 || cue.expressions.length > 0).length,
+              raw_preview: toDebugPreview(raw)
+            });
+          }
+          return parsed;
+        };
+
+        const toInput = (subset: Array<{ order: number; text: string }>) => ([
+          "请按要求分类下面英语字幕，并返回严格 JSON：",
+          "",
+          ...subset.map((cue) => "[" + String(cue.order).padStart(3, "0") + "] " + cue.text)
+        ].join("\n"));
+
+        let parsed = await runClassify("batch_classify", input, 4096);
         const byOrder = new Map(parsed.map((cue) => [cue.order, cue]));
-        const merged = cues.map((cue) => {
+        let merged = cues.map((cue) => {
           const hit = byOrder.get(cue.order);
           return {
             order: cue.order,
@@ -2374,6 +2445,49 @@ export default {
           };
         });
 
+        const hasAnyClass = (row: { hvc: unknown[]; collocations: unknown[]; expressions: unknown[]; spoken_patterns: unknown[] }) =>
+          row.hvc.length > 0 || row.collocations.length > 0 || row.expressions.length > 0 || row.spoken_patterns.length > 0;
+
+        if (!merged.some((row) => hasAnyClass(row))) {
+          const singleMap = new Map<number, {
+            order: number;
+            translation_zh: string;
+            hvc: string[];
+            collocations: string[];
+            expressions: string[];
+            spoken_patterns: string[];
+          }>();
+          for (const cue of cues) {
+            const singleInput = toInput([cue]);
+            parsed = await runClassify("single_classify_" + cue.order, singleInput, 512);
+            const hit = parsed.find((item) => Number(item?.order) === cue.order) ?? parsed[0];
+            if (!hit) continue;
+            singleMap.set(cue.order, {
+              order: cue.order,
+              translation_zh: "",
+              hvc: hit.hvc ?? [],
+              collocations: hit.collocations ?? [],
+              expressions: hit.expressions ?? [],
+              spoken_patterns: hit.spoken_patterns ?? []
+            });
+          }
+          merged = cues.map((cue) => singleMap.get(cue.order) ?? {
+            order: cue.order,
+            translation_zh: "",
+            hvc: [],
+            collocations: [],
+            expressions: [],
+            spoken_patterns: []
+          });
+        }
+
+        if (!merged.some((row) => hasAnyClass(row))) {
+          return json({
+            error: "AI 分类为空，请重试或先打开调试模式查看原始返回。",
+            ...(debugEnabled ? { debug: { trace: debugTrace, merged_preview: toDebugPreview(merged, 1200) } } : {})
+          }, 502);
+        }
+
         return json({
           configs: [
             { key: "hvc", name: "高价值词汇（HVC）", color: "&H0000FFFF" },
@@ -2381,7 +2495,7 @@ export default {
             { key: "spoken_patterns", name: "口语常用句型", color: "&H00FF00AA" }
           ],
           cues: merged,
-          ...(debugEnabled ? { debug: { raw_preview: toDebugPreview(raw), merged_preview: toDebugPreview(merged, 1200) } } : {})
+          ...(debugEnabled ? { debug: { trace: debugTrace, merged_preview: toDebugPreview(merged, 1200) } } : {})
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "AI 分类调用失败";
