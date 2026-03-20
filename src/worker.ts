@@ -2531,87 +2531,79 @@ export default {
       const { cues, debugEnabled } = parseAiAssRequestPayload(payload);
       if (cues.length === 0) return json({ error: "cues 不能为空" }, 400);
 
-      const input = [
-        "请按要求分类下面英语字幕，并返回严格 JSON：",
-        "",
-        ...cues.map((cue) => "[" + String(cue.order).padStart(3, "0") + "] " + cue.text)
-      ].join("\n");
-
       try {
         const debugTrace: Array<Record<string, unknown>> = [];
-        const runClassify = async (stage: string, inputText: string, maxTokens: number) => {
-          const raw = await env.AI.run(AI_ASS_MODEL, {
-            prompt: AI_ASS_CLASSIFY_ONLY_INSTRUCTIONS + "\n\n" + inputText + "\n\n仅输出 JSON。",
-            response_format: { type: "json_object" },
-            temperature: 0.2,
-            max_tokens: maxTokens
-          });
-          const parsed = parseAiAssAnalysis(raw);
-          if (debugEnabled) {
-            debugTrace.push({
-              stage,
-              parsed_count: parsed.length,
-              classified_count: parsed.filter((cue) => cue.hvc.length > 0 || cue.collocations.length > 0 || cue.spoken_patterns.length > 0 || cue.expressions.length > 0).length,
-              raw_preview: toDebugPreview(compactAiRawForDebug(raw), 900)
-            });
-          }
-          return parsed;
-        };
-
-        const toInput = (subset: Array<{ order: number; text: string }>) => ([
-          "请按要求分类下面英语字幕，并返回严格 JSON：",
-          "",
-          ...subset.map((cue) => "[" + String(cue.order).padStart(3, "0") + "] " + cue.text)
-        ].join("\n"));
-
-        let parsed = await runClassify("batch_classify", input, 4096);
-        const byOrder = new Map(parsed.map((cue) => [cue.order, cue]));
-        let merged = cues.map((cue) => {
-          const hit = byOrder.get(cue.order);
-          return {
-            order: cue.order,
-            translation_zh: "",
-            hvc: hit?.hvc ?? [],
-            collocations: hit?.collocations ?? [],
-            expressions: hit?.expressions ?? [],
-            spoken_patterns: hit?.spoken_patterns ?? []
-          };
-        });
+        const merged: Array<{
+          order: number;
+          translation_zh: string;
+          hvc: string[];
+          collocations: string[];
+          expressions: string[];
+          spoken_patterns: string[];
+        }> = [];
+        const failedOrders: number[] = [];
 
         const hasAnyClass = (row: { hvc: unknown[]; collocations: unknown[]; expressions: unknown[]; spoken_patterns: unknown[] }) =>
           row.hvc.length > 0 || row.collocations.length > 0 || row.expressions.length > 0 || row.spoken_patterns.length > 0;
 
-        if (!merged.some((row) => hasAnyClass(row))) {
-          const singleMap = new Map<number, {
-            order: number;
-            translation_zh: string;
-            hvc: string[];
-            collocations: string[];
-            expressions: string[];
-            spoken_patterns: string[];
-          }>();
-          for (const cue of cues) {
-            const singleInput = toInput([cue]);
-            parsed = await runClassify("single_classify_" + cue.order, singleInput, 512);
-            const hit = parsed.find((item) => Number(item?.order) === cue.order) ?? parsed[0];
-            if (!hit) continue;
-            singleMap.set(cue.order, {
+        for (const cue of cues) {
+          const runSingleClassify = async (attempt: "first" | "retry") => {
+            const singlePrompt = [
+              AI_ASS_CLASSIFY_ONLY_INSTRUCTIONS,
+              "",
+              "输入：",
+              "[" + String(cue.order).padStart(3, "0") + "] " + cue.text,
+              "",
+              "仅输出 JSON。"
+            ].join("\n");
+            const raw = await env.AI.run(AI_ASS_MODEL, {
+              prompt: singlePrompt,
+              response_format: { type: "json_object" },
+              temperature: attempt === "first" ? 0.2 : 0,
+              max_tokens: 512
+            });
+            const parsed = parseAiAssAnalysis(raw);
+            if (debugEnabled) {
+              debugTrace.push({
+                stage: "single_classify_" + cue.order + "_" + attempt,
+                parsed_count: parsed.length,
+                classified_count: parsed.filter((row) => hasAnyClass(row)).length,
+                raw_preview: toDebugPreview(compactAiRawForDebug(raw), 900)
+              });
+            }
+            const hit = parsed.find((item) => Number(item?.order) === cue.order) ?? parsed[0] ?? null;
+            if (!hit) return null;
+            return {
               order: cue.order,
               translation_zh: "",
               hvc: hit.hvc ?? [],
               collocations: hit.collocations ?? [],
               expressions: hit.expressions ?? [],
               spoken_patterns: hit.spoken_patterns ?? []
-            });
+            };
+          };
+
+          let row = await runSingleClassify("first");
+          if (!row || !hasAnyClass(row)) {
+            const retryRow = await runSingleClassify("retry");
+            if (retryRow && (hasAnyClass(retryRow) || !row)) {
+              row = retryRow;
+            }
           }
-          merged = cues.map((cue) => singleMap.get(cue.order) ?? {
-            order: cue.order,
-            translation_zh: "",
-            hvc: [],
-            collocations: [],
-            expressions: [],
-            spoken_patterns: []
-          });
+          if (!row) {
+            failedOrders.push(cue.order);
+            row = {
+              order: cue.order,
+              translation_zh: "",
+              hvc: [],
+              collocations: [],
+              expressions: [],
+              spoken_patterns: []
+            };
+          } else if (!hasAnyClass(row)) {
+            failedOrders.push(cue.order);
+          }
+          merged.push(row);
         }
 
         if (!merged.some((row) => hasAnyClass(row))) {
@@ -2628,6 +2620,7 @@ export default {
             { key: "spoken_patterns", name: "口语常用句型", color: "&H00FF00AA" }
           ],
           cues: merged,
+          ...(failedOrders.length > 0 ? { warning: "部分句子分类为空", failed_orders: failedOrders } : {}),
           ...(debugEnabled ? { debug: { trace: debugTrace, merged_preview: toDebugPreview(merged, 1200) } } : {})
         });
       } catch (error) {
