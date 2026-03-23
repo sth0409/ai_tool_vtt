@@ -32,3 +32,5 @@ binding = "AI"
 ```
 
 Worker 内通过 `env.AI.run("@cf/openai/whisper-large-v3-turbo", ...)` 调用模型。
+
+时间 2026-0323
