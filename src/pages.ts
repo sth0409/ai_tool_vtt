@@ -129,8 +129,8 @@ export const EXTRACT_PAGE = `<!doctype html>
         </div>
       </section>
     </main>
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <script src="/vendor/ffmpeg/ffmpeg.js"></script>
+    <script src="/vendor/ffmpeg-util/index.js"></script>
     <script>
       const dropzone = document.getElementById("dropzone");
       const fileInput = document.getElementById("fileInput");
@@ -162,6 +162,18 @@ export const EXTRACT_PAGE = `<!doctype html>
         const dotIndex = filename.lastIndexOf(".");
         if (dotIndex <= 0) return filename + nextExt;
         return filename.slice(0, dotIndex) + nextExt;
+      }
+
+      function isCrossOriginWorkerError(error) {
+        const message = (error && error.message ? String(error.message) : String(error || "")).toLowerCase();
+        return message.includes("failed to construct 'worker'")
+          || message.includes("cannot be accessed from origin")
+          || message.includes("cross-origin")
+          || message.includes("script at");
+      }
+
+      function buildLocalFfmpegCommand(fileName) {
+        return "ffmpeg -i \\"" + fileName + "\\" -vn -ac 1 -ar 16000 -b:a 48k \\"output-16k-mono.mp3\\"";
       }
 
       function refreshFileState() {
@@ -199,16 +211,15 @@ export const EXTRACT_PAGE = `<!doctype html>
           }
 
           const FFmpeg = ffmpegLib.FFmpeg;
-          const toBlobURL = ffmpegUtil.toBlobURL;
-          if (typeof FFmpeg !== "function" || typeof toBlobURL !== "function") {
+          if (typeof FFmpeg !== "function") {
             throw new Error("浏览器端转码环境不可用，请刷新页面后重试。");
           }
 
           const ffmpeg = new FFmpeg();
-          const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd";
-          const coreURL = await toBlobURL(baseURL + "/ffmpeg-core.js", "text/javascript");
-          const wasmURL = await toBlobURL(baseURL + "/ffmpeg-core.wasm", "application/wasm");
-          const workerURL = await toBlobURL(baseURL + "/ffmpeg-core.worker.js", "text/javascript");
+          const baseURL = window.location.origin + "/vendor/ffmpeg-core";
+          const coreURL = baseURL + "/ffmpeg-core.js";
+          const wasmURL = baseURL + "/ffmpeg-core.wasm";
+          const workerURL = baseURL + "/ffmpeg-core.worker.js";
           await ffmpeg.load({ coreURL: coreURL, wasmURL: wasmURL, workerURL: workerURL });
           ffmpegInstance = ffmpeg;
           return ffmpeg;
@@ -357,10 +368,30 @@ export const EXTRACT_PAGE = `<!doctype html>
             outputVtt.textContent = "正在本地转音频（mp3, 16kHz 单声道），首次可能较慢...";
             outputText.textContent = "正在本地转音频，请勿关闭页面...";
             outputSegments.textContent = "正在本地转音频，请稍候...";
-            uploadFile = await transcodeToCompactAudio(selectedFile);
-            outputVtt.textContent = "本地转音频完成，正在上传并提取字幕...";
-            outputText.textContent = "原文件 " + formatBytes(selectedFile.size) + "，转码后 " + formatBytes(uploadFile.size);
-            outputSegments.textContent = "正在调用识别服务...";
+            try {
+              uploadFile = await transcodeToCompactAudio(selectedFile);
+              outputVtt.textContent = "本地转音频完成，正在上传并提取字幕...";
+              outputText.textContent = "原文件 " + formatBytes(selectedFile.size) + "，转码后 " + formatBytes(uploadFile.size);
+              outputSegments.textContent = "正在调用识别服务...";
+            } catch (transcodeError) {
+              if (selectedFile.size <= MAX_UPLOAD_BYTES) {
+                uploadFile = selectedFile;
+                const warning = isCrossOriginWorkerError(transcodeError)
+                  ? "浏览器转码失败（当前站点不允许跨域 Worker），已自动回退为直接上传原文件。"
+                  : "浏览器转码失败，已自动回退为直接上传原文件。";
+                outputVtt.textContent = warning + " 正在提取字幕...";
+                outputText.textContent = "回退原因：" + (transcodeError?.message || "未知错误");
+                outputSegments.textContent = "正在调用识别服务...";
+              } else {
+                if (isCrossOriginWorkerError(transcodeError)) {
+                  throw new Error(
+                    "当前域名下浏览器转码被跨域 Worker 限制，且原文件超过 50MB 无法直传。\\n"
+                    + "请先本地执行：\\n" + buildLocalFfmpegCommand(selectedFile.name)
+                  );
+                }
+                throw transcodeError;
+              }
+            }
           }
 
           if (uploadFile.size > MAX_UPLOAD_BYTES) {

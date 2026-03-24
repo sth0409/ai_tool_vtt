@@ -7,6 +7,11 @@ interface Env {
 }
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+const ASSET_PROXY_ROUTES: Array<{ prefix: string; upstreamBase: string }> = [
+  { prefix: "/vendor/ffmpeg/", upstreamBase: "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/" },
+  { prefix: "/vendor/ffmpeg-util/", upstreamBase: "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/" },
+  { prefix: "/vendor/ffmpeg-core/", upstreamBase: "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/" }
+];
 const AI_ASS_MODEL = "@cf/openai/gpt-oss-120b";
 const AI_ASS_ANALYSIS_INSTRUCTIONS = `你是一位专业的雅思（IELTS）英语教师和词汇分析师。你将收到带序号的英语字幕句子，请输出严格 JSON（不要 markdown、不要注释）。
 
@@ -703,9 +708,49 @@ function parseAiAssRequestPayload(payload: unknown): {
   return { cues, debugEnabled };
 }
 
+function resolveAssetProxyPath(pathname: string): { upstreamUrl: string } | null {
+  for (const route of ASSET_PROXY_ROUTES) {
+    if (!pathname.startsWith(route.prefix)) continue;
+    const rest = pathname.slice(route.prefix.length);
+    if (!rest || rest.includes("..") || !/^[a-zA-Z0-9._/-]+$/.test(rest)) return null;
+    return { upstreamUrl: route.upstreamBase + rest };
+  }
+  return null;
+}
+
+async function proxyStaticAsset(request: Request, pathname: string): Promise<Response | null> {
+  const target = resolveAssetProxyPath(pathname);
+  if (!target) return null;
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return new Response("Method Not Allowed", { status: 405 });
+  }
+
+  const upstreamResp = await fetch(target.upstreamUrl, {
+    headers: { accept: request.headers.get("accept") ?? "*/*" },
+    cf: { cacheEverything: true, cacheTtl: 86400 }
+  });
+  if (!upstreamResp.ok) {
+    return new Response("Upstream asset fetch failed", { status: 502 });
+  }
+
+  const headers = new Headers(upstreamResp.headers);
+  headers.set("cache-control", "public, max-age=86400, s-maxage=86400");
+  headers.set("x-asset-proxy", "ffmpeg");
+  return new Response(upstreamResp.body, {
+    status: upstreamResp.status,
+    headers
+  });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname.startsWith("/vendor/ffmpeg/") || url.pathname.startsWith("/vendor/ffmpeg-util/") || url.pathname.startsWith("/vendor/ffmpeg-core/")) {
+      const assetResp = await proxyStaticAsset(request, url.pathname);
+      if (assetResp) return assetResp;
+      return new Response("Bad Request", { status: 400 });
+    }
 
     if (request.method === "GET" && url.pathname === "/") {
       return new Response(EXTRACT_PAGE, {
