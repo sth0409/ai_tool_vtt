@@ -84,6 +84,56 @@ export const EXTRACT_PAGE = `<!doctype html>
       pre { margin: 0; white-space: pre-wrap; word-break: break-word; line-height: 1.45; }
       .file-info { margin-top: 10px; color: #cbd5e1; font-size: 14px; }
       .error { color: #fca5a5; }
+      .segments-editor {
+        border: 1px solid #1e293b;
+        border-radius: 10px;
+        padding: 10px;
+        background: #000814;
+        min-height: 170px;
+      }
+      .segment-row {
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 10px;
+        margin-bottom: 10px;
+        background: #020617;
+      }
+      .segment-row:last-child { margin-bottom: 0; }
+      .segment-row.drag-over { border-color: #38bdf8; background: #062038; }
+      .segment-meta {
+        font-size: 12px;
+        color: #93c5fd;
+        margin-bottom: 8px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      .segment-words {
+        min-height: 34px;
+        border: 1px dashed #334155;
+        border-radius: 8px;
+        padding: 8px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+      }
+      .segment-word {
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 4px 8px;
+        background: #111827;
+        color: #e2e8f0;
+        cursor: grab;
+        user-select: none;
+        font-size: 13px;
+      }
+      .segment-word.dragging { opacity: 0.45; }
+      .segment-word.drop-before { outline: 2px solid #22d3ee; }
+      .segment-word.drop-after { outline: 2px solid #a78bfa; }
+      .segments-empty {
+        margin: 0;
+        color: #94a3b8;
+        font-size: 13px;
+      }
       @media (max-width: 820px) { .result { grid-template-columns: 1fr; } }
     </style>
   </head>
@@ -123,9 +173,9 @@ export const EXTRACT_PAGE = `<!doctype html>
           <pre id="outputText">这里会显示 Text 结果...</pre>
         </div>
         <div class="result-card full-row">
-          <h2 class="result-title">Segments（分段时间轴）</h2>
-          <p class="result-tip">每段包含开始/结束时间，适合检查切分质量。</p>
-          <pre id="outputSegments">这里会显示 Segments 结果...</pre>
+          <h2 class="result-title">Segments（可拖拽词级纠错）</h2>
+          <p class="result-tip">每个词可拖拽到其他句子，放开后自动重算该句时间戳与 VTT。</p>
+          <div id="outputSegments" class="segments-editor">这里会显示 Segments 结果...</div>
         </div>
       </section>
     </main>
@@ -145,6 +195,9 @@ export const EXTRACT_PAGE = `<!doctype html>
       let selectedFile = null;
       let ffmpegInstance = null;
       let ffmpegLoadPromise = null;
+      let wordTimeline = [];
+      let editableSegmentRows = [];
+      let draggingWordId = "";
 
       function formatBytes(bytes) {
         if (!bytes) return "0 B";
@@ -274,14 +327,253 @@ export const EXTRACT_PAGE = `<!doctype html>
           + "." + String(ms).padStart(3, "0");
       }
 
-      function renderSegments(segments) {
-        if (!Array.isArray(segments) || segments.length === 0) return "没有返回 Segments 内容";
-        return segments.map((segment, index) => {
-          const start = formatSeconds(segment?.start);
-          const end = formatSeconds(segment?.end);
-          const text = typeof segment?.text === "string" ? segment.text.trim() : "";
-          return "[" + String(index + 1).padStart(3, "0") + "] " + start + " --> " + end + "\\n" + (text || "(空文本)");
-        }).join("\\n\\n");
+      function parseVttTimestamp(raw) {
+        const value = String(raw || "").trim();
+        const parts = value.split(":");
+        if (parts.length !== 2 && parts.length !== 3) return NaN;
+        let hour = 0;
+        let minute = 0;
+        let secWithMs = "";
+        if (parts.length === 3) {
+          hour = Number(parts[0]);
+          minute = Number(parts[1]);
+          secWithMs = parts[2];
+        } else {
+          minute = Number(parts[0]);
+          secWithMs = parts[1];
+        }
+        const secParts = secWithMs.split(".");
+        const second = Number(secParts[0]);
+        const ms = Number((secParts[1] || "0").padEnd(3, "0").slice(0, 3));
+        if (![hour, minute, second, ms].every(Number.isFinite)) return NaN;
+        return hour * 3600 + minute * 60 + second + ms / 1000;
+      }
+
+      function formatVttTimestamp(seconds) {
+        const safe = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+        const totalMs = Math.floor(safe * 1000);
+        const hour = Math.floor(totalMs / 3600000);
+        const minute = Math.floor((totalMs % 3600000) / 60000);
+        const second = Math.floor((totalMs % 60000) / 1000);
+        const ms = totalMs % 1000;
+        return String(hour).padStart(2, "0")
+          + ":" + String(minute).padStart(2, "0")
+          + ":" + String(second).padStart(2, "0")
+          + "." + String(ms).padStart(3, "0");
+      }
+
+      function escapeHtml(text) {
+        return String(text || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function parseWordTimelineFromVtt(vttText) {
+        const lines = String(vttText || "").replace(/\r\n/g, "\n").split("\n");
+        const words = [];
+        let index = 0;
+        for (let i = 0; i < lines.length; i += 1) {
+          const timeLine = lines[i].trim();
+          if (!timeLine || !timeLine.includes("-->") || timeLine.startsWith("WEBVTT")) continue;
+          const parts = timeLine.split("-->");
+          const start = parseVttTimestamp(parts[0]);
+          const end = parseVttTimestamp(parts[1]);
+          if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+          const textLines = [];
+          let j = i + 1;
+          while (j < lines.length && lines[j].trim() !== "") {
+            textLines.push(lines[j]);
+            j += 1;
+          }
+          const token = textLines.join(" ").replace(/\s+/g, " ").trim();
+          if (token) {
+            words.push({ id: "w-" + index, text: token, start, end });
+            index += 1;
+          }
+          i = j;
+        }
+        return words;
+      }
+
+      function normalizeSegmentsHint(rawSegments) {
+        if (!Array.isArray(rawSegments)) return [];
+        return rawSegments
+          .map((segment) => {
+            const start = Number(segment?.start);
+            const end = Number(segment?.end);
+            const text = typeof segment?.text === "string" ? segment.text.trim() : "";
+            if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+            return { start, end, text };
+          })
+          .filter(Boolean);
+      }
+
+      function buildRowsFromWords(words, rawSegments) {
+        const segments = normalizeSegmentsHint(rawSegments);
+        const rows = [];
+
+        if (segments.length > 0) {
+          const unused = new Set(words.map((word) => word.id));
+          for (let i = 0; i < segments.length; i += 1) {
+            const segment = segments[i];
+            const ids = words
+              .filter((word) => {
+                if (!unused.has(word.id)) return false;
+                const mid = (word.start + word.end) / 2;
+                return mid >= segment.start - 0.02 && mid <= segment.end + 0.02;
+              })
+              .map((word) => word.id);
+            ids.forEach((id) => unused.delete(id));
+            if (ids.length > 0) rows.push({ id: "r-" + i, wordIds: ids });
+          }
+          const leftovers = words.filter((word) => unused.has(word.id));
+          for (const word of leftovers) {
+            if (rows.length === 0) rows.push({ id: "r-0", wordIds: [word.id] });
+            else rows[rows.length - 1].wordIds.push(word.id);
+          }
+        }
+
+        if (rows.length === 0) {
+          let current = { id: "r-0", wordIds: [] };
+          let rowIndex = 0;
+          for (let i = 0; i < words.length; i += 1) {
+            const word = words[i];
+            const previous = i > 0 ? words[i - 1] : null;
+            const gap = previous ? word.start - previous.end : 0;
+            const shouldSplit = current.wordIds.length > 0 && (
+              gap >= 0.42
+              || /[.!?。！？]$/.test(previous?.text || "")
+              || current.wordIds.length >= 12
+            );
+            if (shouldSplit) {
+              rows.push(current);
+              rowIndex += 1;
+              current = { id: "r-" + rowIndex, wordIds: [] };
+            }
+            current.wordIds.push(word.id);
+          }
+          if (current.wordIds.length > 0) rows.push(current);
+        }
+
+        return rows.filter((row) => row.wordIds.length > 0);
+      }
+
+      function getWordById(wordId) {
+        return wordTimeline.find((item) => item.id === wordId) || null;
+      }
+
+      function buildRowDataList() {
+        const rows = [];
+        for (let i = 0; i < editableSegmentRows.length; i += 1) {
+          const row = editableSegmentRows[i];
+          const words = row.wordIds
+            .map((id) => getWordById(id))
+            .filter(Boolean)
+            .sort((a, b) => a.start - b.start);
+          if (words.length === 0) continue;
+          const start = words[0].start;
+          const end = words[words.length - 1].end;
+          const text = words.map((word) => word.text).join(" ").replace(/\s+([,.!?;:])/g, "$1").trim();
+          rows.push({ index: rows.length + 1, rowId: row.id, words, start, end, text });
+        }
+        return rows;
+      }
+
+      function buildVttFromRows(rows) {
+        if (!Array.isArray(rows) || rows.length === 0) return "";
+        const blocks = ["WEBVTT", ""];
+        for (const row of rows) {
+          blocks.push(formatVttTimestamp(row.start) + " --> " + formatVttTimestamp(row.end));
+          blocks.push(row.text || "(空文本)");
+          blocks.push("");
+        }
+        return blocks.join("\n").trim() + "\n";
+      }
+
+      function buildTextFromRows(rows) {
+        if (!Array.isArray(rows) || rows.length === 0) return "";
+        return rows.map((row) => row.text).filter(Boolean).join("\n");
+      }
+
+      function clearSegmentDropStyles() {
+        outputSegments.querySelectorAll(".segment-row.drag-over").forEach((el) => el.classList.remove("drag-over"));
+        outputSegments.querySelectorAll(".segment-word.drop-before").forEach((el) => el.classList.remove("drop-before"));
+        outputSegments.querySelectorAll(".segment-word.drop-after").forEach((el) => el.classList.remove("drop-after"));
+      }
+
+      function renderSegmentsEditor() {
+        const rows = buildRowDataList();
+        if (rows.length === 0) {
+          outputSegments.innerHTML = '<p class="segments-empty">没有可编辑的词级时间轴数据。请检查识别结果里是否包含词级 VTT。</p>';
+          return;
+        }
+        outputSegments.innerHTML = rows.map((row) => {
+          const wordsHtml = row.words.map((word) => (
+            '<span class="segment-word" draggable="true" data-word-id="' + word.id + '">' + escapeHtml(word.text) + '</span>'
+          )).join("");
+          return ''
+            + '<div class="segment-row" data-row-id="' + row.rowId + '">'
+            +   '<div class="segment-meta">[' + String(row.index).padStart(3, "0") + '] '
+            +     formatSeconds(row.start) + ' --> ' + formatSeconds(row.end)
+            +   '</div>'
+            +   '<div class="segment-words" data-row-id="' + row.rowId + '">' + wordsHtml + '</div>'
+            + '</div>';
+        }).join("");
+      }
+
+      function syncOutputsFromRows() {
+        const rows = buildRowDataList();
+        if (rows.length === 0) return;
+        outputVtt.textContent = buildVttFromRows(rows);
+        outputText.textContent = buildTextFromRows(rows);
+      }
+
+      function initializeEditableSegments(vttText, rawSegments) {
+        wordTimeline = parseWordTimelineFromVtt(vttText);
+        if (wordTimeline.length === 0) {
+          editableSegmentRows = [];
+          outputSegments.textContent = Array.isArray(rawSegments) && rawSegments.length > 0
+            ? rawSegments.map((segment, index) => {
+                const start = formatSeconds(segment?.start);
+                const end = formatSeconds(segment?.end);
+                const text = typeof segment?.text === "string" ? segment.text.trim() : "";
+                return "[" + String(index + 1).padStart(3, "0") + "] " + start + " --> " + end + "\n" + (text || "(空文本)");
+              }).join("\n\n")
+            : "没有返回 Segments 内容";
+          return;
+        }
+        editableSegmentRows = buildRowsFromWords(wordTimeline, rawSegments);
+        renderSegmentsEditor();
+        syncOutputsFromRows();
+      }
+
+      function getRowById(rowId) {
+        return editableSegmentRows.find((row) => row.id === rowId) || null;
+      }
+
+      function moveWord(wordId, targetRowId, targetWordId, insertAfter) {
+        if (!wordId || !targetRowId) return;
+        const sourceRow = editableSegmentRows.find((row) => row.wordIds.includes(wordId));
+        const targetRow = getRowById(targetRowId);
+        if (!sourceRow || !targetRow) return;
+
+        const sourceIndex = sourceRow.wordIds.indexOf(wordId);
+        if (sourceIndex < 0) return;
+        sourceRow.wordIds.splice(sourceIndex, 1);
+
+        let insertIndex = targetRow.wordIds.length;
+        if (targetWordId) {
+          const hit = targetRow.wordIds.indexOf(targetWordId);
+          if (hit >= 0) insertIndex = insertAfter ? hit + 1 : hit;
+        }
+        if (sourceRow === targetRow && sourceIndex < insertIndex) {
+          insertIndex -= 1;
+        }
+        targetRow.wordIds.splice(Math.max(0, insertIndex), 0, wordId);
+        editableSegmentRows = editableSegmentRows.filter((row) => row.wordIds.length > 0);
       }
 
       function buildHttpErrorHint(status) {
@@ -346,6 +638,73 @@ export const EXTRACT_PAGE = `<!doctype html>
 
       transcodeBeforeUpload.addEventListener("change", refreshFileState);
 
+      outputSegments.addEventListener("dragstart", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        if (!target.classList.contains("segment-word")) return;
+        draggingWordId = target.getAttribute("data-word-id") || "";
+        target.classList.add("dragging");
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", draggingWordId);
+        }
+      });
+
+      outputSegments.addEventListener("dragend", () => {
+        clearSegmentDropStyles();
+        outputSegments.querySelectorAll(".segment-word.dragging").forEach((el) => el.classList.remove("dragging"));
+        draggingWordId = "";
+      });
+
+      outputSegments.addEventListener("dragover", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement) || !draggingWordId) return;
+        const row = target.closest("[data-row-id]");
+        if (!row) return;
+        event.preventDefault();
+        clearSegmentDropStyles();
+        row.classList.add("drag-over");
+        const word = target.closest(".segment-word");
+        if (word instanceof HTMLElement) {
+          const rect = word.getBoundingClientRect();
+          const after = event.clientX > rect.left + rect.width / 2;
+          word.classList.add(after ? "drop-after" : "drop-before");
+        }
+      });
+
+      outputSegments.addEventListener("dragleave", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const row = target.closest(".segment-row");
+        if (row instanceof HTMLElement && !row.contains(event.relatedTarget)) {
+          row.classList.remove("drag-over");
+        }
+      });
+
+      outputSegments.addEventListener("drop", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const rowEl = target.closest(".segment-row");
+        if (!(rowEl instanceof HTMLElement) || !draggingWordId) return;
+        event.preventDefault();
+
+        const targetRowId = rowEl.getAttribute("data-row-id") || "";
+        const tokenEl = target.closest(".segment-word");
+        let targetWordId = "";
+        let insertAfter = true;
+        if (tokenEl instanceof HTMLElement) {
+          targetWordId = tokenEl.getAttribute("data-word-id") || "";
+          const rect = tokenEl.getBoundingClientRect();
+          insertAfter = event.clientX > rect.left + rect.width / 2;
+        }
+
+        moveWord(draggingWordId, targetRowId, targetWordId, insertAfter);
+        clearSegmentDropStyles();
+        draggingWordId = "";
+        renderSegmentsEditor();
+        syncOutputsFromRows();
+      });
+
       extractBtn.addEventListener("click", async () => {
         if (!selectedFile) return;
         if (selectedFile.size > MAX_UPLOAD_BYTES && !transcodeBeforeUpload.checked) {
@@ -359,6 +718,8 @@ export const EXTRACT_PAGE = `<!doctype html>
         outputVtt.textContent = "正在提取字幕，请稍候...";
         outputText.textContent = "正在提取字幕，请稍候...";
         outputSegments.textContent = "正在提取字幕，请稍候...";
+        wordTimeline = [];
+        editableSegmentRows = [];
         extractBtn.disabled = true;
         pickFileBtn.disabled = true;
 
@@ -416,9 +777,10 @@ export const EXTRACT_PAGE = `<!doctype html>
             throw new Error(backendError || buildHttpErrorHint(response.status));
           }
           const result = data && typeof data === "object" ? data : {};
-          outputVtt.textContent = typeof result.vtt === "string" ? result.vtt : "没有返回 VTT 内容";
+          const vttText = typeof result.vtt === "string" ? result.vtt : "";
+          outputVtt.textContent = vttText || "没有返回 VTT 内容";
           outputText.textContent = typeof result.text === "string" ? result.text : "没有返回 Text 内容";
-          outputSegments.textContent = renderSegments(result.segments);
+          initializeEditableSegments(vttText, result.segments);
         } catch (error) {
           const message = error?.message || "请求失败";
           outputVtt.innerHTML = '<span class="error">' + message + "</span>";
