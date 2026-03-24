@@ -372,7 +372,7 @@ export const EXTRACT_PAGE = `<!doctype html>
       }
 
       function parseWordTimelineFromVtt(vttText) {
-        const lines = String(vttText || "").replace(/\r\n/g, "\n").split("\n");
+        const lines = String(vttText || "").replace(/\\r\\n/g, "\\n").split("\\n");
         const words = [];
         let index = 0;
         for (let i = 0; i < lines.length; i += 1) {
@@ -388,7 +388,7 @@ export const EXTRACT_PAGE = `<!doctype html>
             textLines.push(lines[j]);
             j += 1;
           }
-          const token = textLines.join(" ").replace(/\s+/g, " ").trim();
+          const token = textLines.join(" ").replace(/\\s+/g, " ").trim();
           if (token) {
             words.push({ id: "w-" + index, text: token, start, end });
             index += 1;
@@ -476,7 +476,7 @@ export const EXTRACT_PAGE = `<!doctype html>
           if (words.length === 0) continue;
           const start = words[0].start;
           const end = words[words.length - 1].end;
-          const text = words.map((word) => word.text).join(" ").replace(/\s+([,.!?;:])/g, "$1").trim();
+          const text = words.map((word) => word.text).join(" ").replace(/\\s+([,.!?;:])/g, "$1").trim();
           rows.push({ index: rows.length + 1, rowId: row.id, words, start, end, text });
         }
         return rows;
@@ -490,12 +490,12 @@ export const EXTRACT_PAGE = `<!doctype html>
           blocks.push(row.text || "(空文本)");
           blocks.push("");
         }
-        return blocks.join("\n").trim() + "\n";
+        return blocks.join("\\n").trim() + "\\n";
       }
 
       function buildTextFromRows(rows) {
         if (!Array.isArray(rows) || rows.length === 0) return "";
-        return rows.map((row) => row.text).filter(Boolean).join("\n");
+        return rows.map((row) => row.text).filter(Boolean).join("\\n");
       }
 
       function clearSegmentDropStyles() {
@@ -540,8 +540,8 @@ export const EXTRACT_PAGE = `<!doctype html>
                 const start = formatSeconds(segment?.start);
                 const end = formatSeconds(segment?.end);
                 const text = typeof segment?.text === "string" ? segment.text.trim() : "";
-                return "[" + String(index + 1).padStart(3, "0") + "] " + start + " --> " + end + "\n" + (text || "(空文本)");
-              }).join("\n\n")
+                return "[" + String(index + 1).padStart(3, "0") + "] " + start + " --> " + end + "\\n" + (text || "(空文本)");
+              }).join("\\n\\n")
             : "没有返回 Segments 内容";
           return;
         }
