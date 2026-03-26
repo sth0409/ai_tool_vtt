@@ -1415,6 +1415,7 @@ I just want a guy who's good-looking and fun."></textarea>
         preprocessBody.querySelectorAll(".line-retry-btn").forEach((btn) => {
           if (btn instanceof HTMLButtonElement) btn.disabled = active;
         });
+        renderPreprocess();
       }
 
       function renderAiDebug(payload) {
@@ -1585,22 +1586,13 @@ I just want a guy who's good-looking and fun."></textarea>
         };
       }
 
-      function getContiguousAiCompletedCount() {
-        if (!Array.isArray(cuesCache) || cuesCache.length === 0) return 0;
-        let count = 0;
-        for (const cue of cuesCache) {
-          const hasRow = Boolean(cueAiRowsByOrder[String(cue.order)]);
-          if (!hasRow) break;
-          count += 1;
-        }
-        return count;
-      }
-
       function getVisibleCuesForRender() {
         if (!Array.isArray(cuesCache) || cuesCache.length === 0) return [];
         if (!aiAnalyzing) return cuesCache;
-        const doneCount = getContiguousAiCompletedCount();
-        return doneCount > 0 ? cuesCache.slice(0, doneCount) : [];
+        return cuesCache.filter((cue) => {
+          const status = getCueRetryStatus(cue.order);
+          return status === "running" || status === "success" || status === "error";
+        });
       }
 
       async function callAiAnalyzeByLine(cue, debug) {
@@ -1886,7 +1878,7 @@ I just want a guy who's good-looking and fun."></textarea>
         const visibleCues = getVisibleCuesForRender();
         if (visibleCues.length === 0) {
           preprocessBody.innerHTML = aiAnalyzing
-            ? '<p class="preprocess-placeholder">AI 正在逐行处理中，等待第 001 行完成后展示...</p>'
+            ? '<p class="preprocess-placeholder">AI 正在逐行处理中，等待首行返回后展示...</p>'
             : '<p class="preprocess-placeholder">暂无可展示内容</p>';
           return;
         }
@@ -2343,8 +2335,8 @@ I just want a guy who's good-looking and fun."></textarea>
             const cue = requestCues[i];
             setCueRetryStatus(cue.order, "running");
             renderPreprocess();
-            const visibleCount = getContiguousAiCompletedCount();
-            setAiStatus("正在分析第 " + String(i + 1) + "/" + String(requestCues.length) + " 行（当前连续展示 " + visibleCount + " 行）...", false);
+            const visibleCount = getVisibleCuesForRender().length;
+            setAiStatus("正在分析第 " + String(i + 1) + "/" + String(requestCues.length) + " 行（当前已展示 " + visibleCount + " 行）...", false);
             pushAiLog("info", "开始分析第 " + String(cue.order).padStart(3, "0") + " 行");
             try {
               const row = await callAiAnalyzeByLine(cue, debug);
@@ -2356,8 +2348,8 @@ I just want a guy who's good-looking and fun."></textarea>
               renderPreprocess();
               renderGroupedHighlights();
               refreshPreviewText();
-              const visibleAfter = getContiguousAiCompletedCount();
-              pushAiLog("info", "第 " + String(cue.order).padStart(3, "0") + " 行成功；连续可展示到 " + visibleAfter + " 行");
+              const visibleAfter = getVisibleCuesForRender().length;
+              pushAiLog("info", "第 " + String(cue.order).padStart(3, "0") + " 行成功；已展示 " + visibleAfter + " 行");
             } catch (error) {
               failedOrders.push(cue.order);
               setCueRetryStatus(cue.order, "error");
@@ -2371,10 +2363,10 @@ I just want a guy who's good-looking and fun."></textarea>
           }
           hideWordMenu();
           if (failedOrders.length > 0) {
-            setAiStatus("AI 完成：成功 " + aiRows.length + " 行，失败 " + failedOrders.length + " 行，连续展示 " + getContiguousAiCompletedCount() + " 行（可点击对应行右侧重试）。", false);
-            pushAiLog("warn", "分析完成：成功 " + aiRows.length + " 行，失败 " + failedOrders.length + " 行，连续展示 " + getContiguousAiCompletedCount() + " 行");
+            setAiStatus("AI 完成：成功 " + aiRows.length + " 行，失败 " + failedOrders.length + " 行（可点击对应行右侧重试）。", false);
+            pushAiLog("warn", "分析完成：成功 " + aiRows.length + " 行，失败 " + failedOrders.length + " 行");
           } else {
-            setAiStatus("AI 完成：已更新逐行选词与翻译（连续展示 " + getContiguousAiCompletedCount() + " 行）。", false);
+            setAiStatus("AI 完成：已更新逐行选词与翻译。", false);
             pushAiLog("info", "分析完成：全部成功，共 " + aiRows.length + " 行");
           }
         } catch (error) {
