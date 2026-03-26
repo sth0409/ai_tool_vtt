@@ -954,6 +954,33 @@ export const ASS_PAGE = `<!doctype html>
         line-height: 1.4;
         white-space: pre-wrap;
       }
+      .ai-log-toolbar {
+        margin-bottom: 8px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+      }
+      .ai-log-meta {
+        color: #94a3b8;
+        font-size: 12px;
+      }
+      .ai-log-box {
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 10px;
+        background: #000814;
+        min-height: 120px;
+        max-height: 280px;
+        overflow: auto;
+      }
+      .ai-log-box pre {
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
       .checkbox-inline {
         display: flex;
         align-items: center;
@@ -1203,6 +1230,19 @@ I just want a guy who's good-looking and fun."></textarea>
           <pre id="outputCmd">这里会显示 ffmpeg 命令...</pre>
         </div>
       </section>
+
+      <section class="result">
+        <div class="result-card">
+          <h2 class="result-title">AI 处理日志</h2>
+          <div class="ai-log-toolbar">
+            <span id="aiLogMeta" class="ai-log-meta">尚无日志</span>
+            <button id="clearAiLogBtn" type="button" class="subtle-btn">清空日志</button>
+          </div>
+          <div class="ai-log-box">
+            <pre id="aiLogOutput">尚无日志</pre>
+          </div>
+        </div>
+      </section>
     </main>
 
     <div id="wordMenu" class="word-menu" hidden>
@@ -1276,6 +1316,9 @@ I just want a guy who's good-looking and fun."></textarea>
       const downloadAssBtn = document.getElementById("downloadAssBtn");
       const outputAss = document.getElementById("outputAss");
       const outputCmd = document.getElementById("outputCmd");
+      const aiLogMeta = document.getElementById("aiLogMeta");
+      const clearAiLogBtn = document.getElementById("clearAiLogBtn");
+      const aiLogOutput = document.getElementById("aiLogOutput");
 
       let lastAssContent = "";
       let previewVideoUrl = "";
@@ -1291,6 +1334,7 @@ I just want a guy who's good-looking and fun."></textarea>
       let assignments = [];
       let selectedContext = null;
       let aiAnalyzing = false;
+      let aiLogs = [];
       const AI_HVC_LOW_VALUE_WORDS = new Set([
         "a", "an", "the", "this", "that", "these", "those", "it", "its", "i", "you", "he", "she", "we", "they",
         "me", "him", "her", "us", "them", "my", "your", "his", "our", "their",
@@ -1332,6 +1376,37 @@ I just want a guy who's good-looking and fun."></textarea>
       function setAiStatus(message, isError) {
         aiStatus.textContent = message || "";
         aiStatus.style.color = isError ? "#fca5a5" : "#94a3b8";
+      }
+
+      function formatLogTime(date) {
+        const d = date instanceof Date ? date : new Date();
+        return String(d.getHours()).padStart(2, "0")
+          + ":" + String(d.getMinutes()).padStart(2, "0")
+          + ":" + String(d.getSeconds()).padStart(2, "0");
+      }
+
+      function renderAiLogs() {
+        if (!aiLogOutput || !aiLogMeta) return;
+        if (!Array.isArray(aiLogs) || aiLogs.length === 0) {
+          aiLogMeta.textContent = "尚无日志";
+          aiLogOutput.textContent = "尚无日志";
+          return;
+        }
+        aiLogMeta.textContent = "共 " + aiLogs.length + " 条";
+        aiLogOutput.textContent = aiLogs.join("\\n");
+      }
+
+      function clearAiLogs() {
+        aiLogs = [];
+        renderAiLogs();
+      }
+
+      function pushAiLog(level, message) {
+        const tag = level === "error" ? "ERROR" : (level === "warn" ? "WARN" : "INFO");
+        const line = "[" + formatLogTime(new Date()) + "][" + tag + "] " + String(message || "").trim();
+        aiLogs.push(line);
+        if (aiLogs.length > 500) aiLogs = aiLogs.slice(aiLogs.length - 500);
+        renderAiLogs();
       }
 
       function setAiAnalyzingState(active) {
@@ -1601,6 +1676,7 @@ I just want a guy who's good-looking and fun."></textarea>
         setAiAnalyzingState(true);
         setCueRetryStatus(cue.order, "running");
         renderPreprocess();
+        pushAiLog("info", "开始重试第 " + String(cue.order).padStart(3, "0") + " 行");
         setAiStatus("正在重试第 " + String(cue.order).padStart(3, "0") + " 行...", false);
         try {
           const debug = Boolean(aiDebugToggle && aiDebugToggle.checked);
@@ -1615,10 +1691,12 @@ I just want a guy who's good-looking and fun."></textarea>
           renderGroupedHighlights();
           refreshPreviewText();
           hideWordMenu();
+          pushAiLog("info", "第 " + String(cue.order).padStart(3, "0") + " 行重试成功");
           setAiStatus("第 " + String(cue.order).padStart(3, "0") + " 行重试完成。", false);
         } catch (error) {
           setCueRetryStatus(cue.order, "error");
           renderPreprocess();
+          pushAiLog("error", "第 " + String(cue.order).padStart(3, "0") + " 行重试失败: " + String(error?.message || "未知错误"));
           setAiStatus(error?.message || "单行重试失败", true);
         } finally {
           setAiAnalyzingState(false);
@@ -2249,6 +2327,8 @@ I just want a guy who's good-looking and fun."></textarea>
           return;
         }
         setAiAnalyzingState(true);
+        clearAiLogs();
+        pushAiLog("info", "开始逐行分析，总计 " + cues.length + " 行");
         setAiStatus("正在调用 AI：逐行智能选词+翻译...", false);
         renderAiDebug(null);
         try {
@@ -2263,7 +2343,9 @@ I just want a guy who's good-looking and fun."></textarea>
             const cue = requestCues[i];
             setCueRetryStatus(cue.order, "running");
             renderPreprocess();
-            setAiStatus("正在分析第 " + String(i + 1) + "/" + String(requestCues.length) + " 行...", false);
+            const visibleCount = getContiguousAiCompletedCount();
+            setAiStatus("正在分析第 " + String(i + 1) + "/" + String(requestCues.length) + " 行（当前连续展示 " + visibleCount + " 行）...", false);
+            pushAiLog("info", "开始分析第 " + String(cue.order).padStart(3, "0") + " 行");
             try {
               const row = await callAiAnalyzeByLine(cue, debug);
               cueAiRowsByOrder[String(cue.order)] = row;
@@ -2274,10 +2356,13 @@ I just want a guy who's good-looking and fun."></textarea>
               renderPreprocess();
               renderGroupedHighlights();
               refreshPreviewText();
-            } catch {
+              const visibleAfter = getContiguousAiCompletedCount();
+              pushAiLog("info", "第 " + String(cue.order).padStart(3, "0") + " 行成功；连续可展示到 " + visibleAfter + " 行");
+            } catch (error) {
               failedOrders.push(cue.order);
               setCueRetryStatus(cue.order, "error");
               renderPreprocess();
+              pushAiLog("error", "第 " + String(cue.order).padStart(3, "0") + " 行失败: " + String(error?.message || "未知错误"));
             }
           }
           const aiRows = Object.values(cueAiRowsByOrder);
@@ -2286,11 +2371,14 @@ I just want a guy who's good-looking and fun."></textarea>
           }
           hideWordMenu();
           if (failedOrders.length > 0) {
-            setAiStatus("AI 完成：成功 " + aiRows.length + " 行，失败 " + failedOrders.length + " 行（可点击对应行右侧重试）。", false);
+            setAiStatus("AI 完成：成功 " + aiRows.length + " 行，失败 " + failedOrders.length + " 行，连续展示 " + getContiguousAiCompletedCount() + " 行（可点击对应行右侧重试）。", false);
+            pushAiLog("warn", "分析完成：成功 " + aiRows.length + " 行，失败 " + failedOrders.length + " 行，连续展示 " + getContiguousAiCompletedCount() + " 行");
           } else {
-            setAiStatus("AI 完成：已更新逐行选词与翻译。", false);
+            setAiStatus("AI 完成：已更新逐行选词与翻译（连续展示 " + getContiguousAiCompletedCount() + " 行）。", false);
+            pushAiLog("info", "分析完成：全部成功，共 " + aiRows.length + " 行");
           }
         } catch (error) {
+          pushAiLog("error", "分析中断: " + String(error?.message || "未知错误"));
           setAiStatus(error?.message || "AI 分析失败", true);
         } finally {
           setAiAnalyzingState(false);
@@ -2502,8 +2590,11 @@ I just want a guy who's good-looking and fun."></textarea>
         URL.revokeObjectURL(url);
       });
 
+      if (clearAiLogBtn) clearAiLogBtn.addEventListener("click", clearAiLogs);
+
       renderConfigList();
       renderGroupedHighlights();
+      renderAiLogs();
       syncOpacitySliderFromOutlineColor();
       updatePreviewStageAspect();
       updatePreviewOverlayAndText();
