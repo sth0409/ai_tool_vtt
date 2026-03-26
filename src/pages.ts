@@ -1283,7 +1283,7 @@ I just want a guy who's good-looking and fun."></textarea>
 
       <div class="actions-row">
         <button id="generateAssBtn" type="button">生成 ASS + 命令</button>
-        <button id="downloadAssBtn" type="button" class="subtle-btn" disabled>下载 subtitle.ass</button>
+        <button id="downloadAssBtn" type="button" class="subtle-btn" disabled>下载 ASS 文件</button>
         <button id="downloadToolkitBtn" type="button" class="subtle-btn" disabled>一键工具包配置</button>
       </div>
 
@@ -1446,6 +1446,7 @@ I just want a guy who's good-looking and fun."></textarea>
       const confirmToolkitBtn = document.getElementById("confirmToolkitBtn");
 
       let lastAssContent = "";
+      let lastAssFilename = "subtitle.ass";
       let previewVideoUrl = "";
       let dragState = null;
       let previewVideoMeta = null;
@@ -1529,6 +1530,25 @@ I just want a guy who's good-looking and fun."></textarea>
         return { base: name.slice(0, dot), ext: name.slice(dot) };
       }
 
+      function zeroPad2(value) {
+        return String(Math.max(0, Number(value) || 0)).padStart(2, "0");
+      }
+
+      function buildAssTimestamp(dateLike) {
+        const date = dateLike instanceof Date ? dateLike : new Date();
+        return String(date.getFullYear())
+          + zeroPad2(date.getMonth() + 1)
+          + zeroPad2(date.getDate())
+          + "_"
+          + zeroPad2(date.getHours())
+          + zeroPad2(date.getMinutes())
+          + zeroPad2(date.getSeconds());
+      }
+
+      function buildTimestampedAssFilename() {
+        return "subtitle_" + buildAssTimestamp(new Date()) + ".ass";
+      }
+
       function buildMergedOutputName(videoName) {
         const leaf = getPathLeaf(videoName) || "input.mp4";
         const parsed = splitNameExt(leaf);
@@ -1559,15 +1579,16 @@ I just want a guy who's good-looking and fun."></textarea>
         setToolkitStatus("", false);
       }
 
-      function buildToolkitCommandScript(ffmpegPath, outputName) {
+      function buildToolkitCommandScript(ffmpegPath, outputName, assFilename) {
         const safeFfmpegPath = shellEscapeDoubleQuoted(ffmpegPath);
         const safeOutputName = shellEscapeDoubleQuoted(outputName);
+        const safeAssFilename = shellEscapeDoubleQuoted(String(assFilename || "subtitle.ass"));
         return [
           '#!/bin/zsh',
           'set -e',
           '',
           'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"',
-          'ASS_FILE="$SCRIPT_DIR/subtitle.ass"',
+          'ASS_FILE="$SCRIPT_DIR/' + safeAssFilename + '"',
           'FFMPEG_BIN="' + safeFfmpegPath + '"',
           'OUTPUT_NAME="' + safeOutputName + '"',
           'INPUT_VIDEO=$(osascript <<APPLESCRIPT',
@@ -1594,7 +1615,7 @@ I just want a guy who's good-looking and fun."></textarea>
           'OUTPUT_VIDEO="$(dirname "$INPUT_VIDEO")/$OUTPUT_NAME"',
           '',
           'if [ ! -f "$ASS_FILE" ]; then',
-          '  echo "subtitle.ass 不存在：$ASS_FILE"',
+          '  echo "ASS 文件不存在：$ASS_FILE"',
           '  exit 1',
           'fi',
           '',
@@ -2843,6 +2864,7 @@ I just want a guy who's good-looking and fun."></textarea>
         outputAss.innerHTML = '<span class="error">' + message + "</span>";
         outputCmd.innerHTML = '<span class="error">' + message + "</span>";
         lastAssContent = "";
+        lastAssFilename = "subtitle.ass";
         downloadAssBtn.disabled = true;
         if (downloadToolkitBtn) downloadToolkitBtn.disabled = true;
       }
@@ -3155,13 +3177,14 @@ I just want a guy who's good-looking and fun."></textarea>
           cueTranslations
         );
         lastAssContent = ass;
+        lastAssFilename = buildTimestampedAssFilename();
         outputAss.textContent = ass;
         outputCmd.textContent = [
-          "# 1) 使用下方按钮直接下载 subtitle.ass，或手动保存",
-          'ffmpeg -i "input.mp4" -vf "ass=subtitle.ass" -c:a copy "output.mp4"',
+          "# 1) 使用下方按钮直接下载 " + lastAssFilename + "，或手动保存",
+          'ffmpeg -i "input.mp4" -vf "ass=' + lastAssFilename + '" -c:a copy "output.mp4"',
           "",
           "# 如需兼容性更好（重编码视频）：",
-          'ffmpeg -i "input.mp4" -vf "ass=subtitle.ass" -c:v libx264 -preset medium -crf 18 -c:a aac -b:a 192k "output.mp4"'
+          'ffmpeg -i "input.mp4" -vf "ass=' + lastAssFilename + '" -c:v libx264 -preset medium -crf 18 -c:a aac -b:a 192k "output.mp4"'
         ].join("\\n");
         downloadAssBtn.disabled = false;
         if (downloadToolkitBtn) downloadToolkitBtn.disabled = false;
@@ -3173,7 +3196,7 @@ I just want a guy who's good-looking and fun."></textarea>
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = "subtitle.ass";
+        a.download = lastAssFilename || "subtitle.ass";
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -3213,10 +3236,11 @@ I just want a guy who's good-looking and fun."></textarea>
 
         try {
           setToolkitStatus("正在打包下载...", false);
-          const commandScript = buildToolkitCommandScript(ffmpegPath, outputName);
+          const assFilename = lastAssFilename || buildTimestampedAssFilename();
+          const commandScript = buildToolkitCommandScript(ffmpegPath, outputName, assFilename);
           const readme = buildToolkitReadme(ffmpegPath, outputName);
           const zipBlob = makeZipBlob([
-            { name: "subtitle.ass", content: lastAssContent, executable: false },
+            { name: assFilename, content: lastAssContent, executable: false },
             { name: "merge_subtitle.command", content: commandScript + "\\n", executable: true },
             { name: "README.txt", content: readme + "\\n", executable: false }
           ]);
