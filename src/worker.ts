@@ -38,7 +38,7 @@ Rules:
 2) Keep ori_text exactly the same as input text.
 3) zh must be non-empty natural Chinese translation.
 4) Arrays must always exist. Use [] when no item.
-5) hvc should prioritize IELTS speaking B2-C1 vocabulary.
+5) hvc must contain only high-value IELTS speaking vocabulary (B2-C1 / academic-leaning). Do not include low-value basic words.
 6) collocations should be meaningful multi-word collocations/phrasal verbs.
 7) sentence_patterns should be reusable spoken sentence patterns.
 8) Do not use placeholders like "...", "N/A", "TBD".`;

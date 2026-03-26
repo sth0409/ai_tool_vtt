@@ -794,7 +794,6 @@ export const EXTRACT_PAGE = `<!doctype html>
     </script>
   </body>
 </html>`;
-
 export const ASS_PAGE = `<!doctype html>
 <html lang="zh-CN">
   <head>
