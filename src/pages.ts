@@ -1442,7 +1442,7 @@ I just want a guy who's good-looking and fun."></textarea>
       function setAiAnalyzingState(active) {
         aiAnalyzing = active;
         if (aiClassifyBtn) aiClassifyBtn.disabled = active;
-        preprocessBody.querySelectorAll(".line-retry-btn, .line-edit-btn").forEach((btn) => {
+        preprocessBody.querySelectorAll(".line-retry-btn").forEach((btn) => {
           if (btn instanceof HTMLButtonElement) btn.disabled = active;
         });
         renderPreprocess();
@@ -1696,6 +1696,10 @@ I just want a guy who's good-looking and fun."></textarea>
         return "line-retry-btn";
       }
 
+      function isEditLineDisabled(cueOrder) {
+        return getCueRetryStatus(cueOrder) === "running";
+      }
+
       async function retrySingleCueAi(cueOrder) {
         if (aiAnalyzing) return;
         const cues = parseCueBlocks(subtitleInput.value || "");
@@ -1803,7 +1807,6 @@ I just want a guy who's good-looking and fun."></textarea>
       }
 
       function saveEditedCue() {
-        if (aiAnalyzing) return;
         if (!Number.isFinite(editingCueOrder)) return;
         const cueOrder = Math.round(Number(editingCueOrder));
         const cue = cuesCache.find((item) => item.order === cueOrder) || null;
@@ -1994,6 +1997,7 @@ I just want a guy who's good-looking and fun."></textarea>
           const zhHtml = zh ? '<div class="cue-translation">' + escapeHtml(zh) + "</div>" : "";
           const retryBtnClass = getRetryButtonClass(cue.order);
           const retryBtnLabel = getRetryButtonLabel(cue.order);
+          const editDisabledAttr = isEditLineDisabled(cue.order) ? " disabled" : "";
           return ''
             + '<div class="cue-line" data-cue-order="' + cue.order + '" data-cue-index="' + cue.indexLabel + '">'
             +   '<div class="cue-row">'
@@ -2003,7 +2007,7 @@ I just want a guy who's good-looking and fun."></textarea>
             +       zhHtml
             +     '</div>'
             +     '<div class="cue-actions">'
-            +       '<button type="button" class="line-edit-btn" data-action="edit-line" data-cue-order="' + cue.order + '">编辑</button>'
+            +       '<button type="button" class="line-edit-btn" data-action="edit-line" data-cue-order="' + cue.order + '"' + editDisabledAttr + '>编辑</button>'
             +       '<button type="button" class="' + retryBtnClass + '" data-action="retry-line" data-cue-order="' + cue.order + '">' + retryBtnLabel + '</button>'
             +     '</div>'
             +   '</div>'
