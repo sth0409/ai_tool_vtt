@@ -911,6 +911,9 @@ export const ASS_PAGE = `<!doctype html>
         font-size: 12px;
         background: #334155;
       }
+      .line-retry-btn.is-running { background: #475569; }
+      .line-retry-btn.is-success { background: #166534; }
+      .line-retry-btn.is-error { background: #991b1b; }
       .cue-meta {
         color: #94a3b8;
         font-size: 12px;
@@ -1280,6 +1283,7 @@ I just want a guy who's good-looking and fun."></textarea>
       let previewVideoMeta = null;
       let cuesCache = [];
       let cueAiRowsByOrder = {};
+      let cueRetryStatusByOrder = {};
       let cueTranslations = {};
       let highlightConfigs = [
         { id: "cfg-default", name: "默认高亮", color: "&H0000FFFF" }
@@ -1287,6 +1291,16 @@ I just want a guy who's good-looking and fun."></textarea>
       let assignments = [];
       let selectedContext = null;
       let aiAnalyzing = false;
+      const AI_HVC_LOW_VALUE_WORDS = new Set([
+        "a", "an", "the", "this", "that", "these", "those", "it", "its", "i", "you", "he", "she", "we", "they",
+        "me", "him", "her", "us", "them", "my", "your", "his", "our", "their",
+        "is", "am", "are", "was", "were", "be", "been", "being", "do", "does", "did", "have", "has", "had",
+        "go", "goes", "went", "gone", "come", "comes", "came", "get", "gets", "got", "make", "makes", "made",
+        "take", "takes", "took", "see", "saw", "seen", "look", "looks", "looked", "want", "need", "use", "used",
+        "people", "person", "thing", "things", "time", "day", "year", "man", "woman", "friend", "family",
+        "good", "bad", "nice", "great", "easy", "hard", "simple", "small", "big", "new", "old",
+        "very", "really", "just", "also", "maybe", "always", "often", "usually", "sometimes"
+      ]);
 
       function normalizeAssColor(input, fallback) {
         const value = String(input || "").trim().toUpperCase();
@@ -1360,6 +1374,23 @@ I just want a guy who's good-looking and fun."></textarea>
           .replace(/^[\\s"'“”‘’()\\[\\]{}.,!?;:]+/, "")
           .replace(/[\\s"'“”‘’()\\[\\]{}.,!?;:]+$/, "");
         return stripped.replace(/\\s*[-–—:]\\s*.+$/, "").trim();
+      }
+
+      function isHighValueHvcTerm(term) {
+        const cleaned = cleanAiTerm(term);
+        if (!cleaned) return false;
+        if (!/[a-zA-Z]/.test(cleaned)) return false;
+        if (/[^a-zA-Z\\s'/-]/.test(cleaned)) return false;
+        const words = (cleaned.toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) || []).filter(Boolean);
+        if (words.length === 0) return false;
+        if (words.length === 1) {
+          const w = words[0];
+          if (w.length <= 3) return false;
+          if (AI_HVC_LOW_VALUE_WORDS.has(w)) return false;
+          return true;
+        }
+        const lowValueCount = words.filter((w) => AI_HVC_LOW_VALUE_WORDS.has(w)).length;
+        return lowValueCount < words.length - 1;
       }
 
       function createAiConfigs() {
@@ -1460,11 +1491,29 @@ I just want a guy who's good-looking and fun."></textarea>
         return {
           order: Math.round(lineNumber) + 1,
           translation_zh: String(row.zh || "").trim(),
-          hvc: toList(row.hvc),
+          hvc: toList(row.hvc).filter((term) => isHighValueHvcTerm(term)),
           collocations: toList(row.collocations),
           expressions: [],
           spoken_patterns: toList(row.sentence_patterns)
         };
+      }
+
+      function getContiguousAiCompletedCount() {
+        if (!Array.isArray(cuesCache) || cuesCache.length === 0) return 0;
+        let count = 0;
+        for (const cue of cuesCache) {
+          const hasRow = Boolean(cueAiRowsByOrder[String(cue.order)]);
+          if (!hasRow) break;
+          count += 1;
+        }
+        return count;
+      }
+
+      function getVisibleCuesForRender() {
+        if (!Array.isArray(cuesCache) || cuesCache.length === 0) return [];
+        if (!aiAnalyzing) return cuesCache;
+        const doneCount = getContiguousAiCompletedCount();
+        return doneCount > 0 ? cuesCache.slice(0, doneCount) : [];
       }
 
       async function callAiAnalyzeByLine(cue, debug) {
@@ -1501,6 +1550,30 @@ I just want a guy who's good-looking and fun."></textarea>
         applyAiTranslations(cues, aiRows);
       }
 
+      function setCueRetryStatus(cueOrder, status) {
+        cueRetryStatusByOrder[String(cueOrder)] = status;
+      }
+
+      function getCueRetryStatus(cueOrder) {
+        return cueRetryStatusByOrder[String(cueOrder)] || "idle";
+      }
+
+      function getRetryButtonLabel(cueOrder) {
+        const status = getCueRetryStatus(cueOrder);
+        if (status === "running") return "处理中";
+        if (status === "success") return "已更新";
+        if (status === "error") return "重试失败";
+        return "重试";
+      }
+
+      function getRetryButtonClass(cueOrder) {
+        const status = getCueRetryStatus(cueOrder);
+        if (status === "running") return "line-retry-btn is-running";
+        if (status === "success") return "line-retry-btn is-success";
+        if (status === "error") return "line-retry-btn is-error";
+        return "line-retry-btn";
+      }
+
       async function retrySingleCueAi(cueOrder) {
         if (aiAnalyzing) return;
         const cues = parseCueBlocks(subtitleInput.value || "");
@@ -1514,11 +1587,14 @@ I just want a guy who's good-looking and fun."></textarea>
           return;
         }
         setAiAnalyzingState(true);
+        setCueRetryStatus(cue.order, "running");
+        renderPreprocess();
         setAiStatus("正在重试第 " + String(cue.order).padStart(3, "0") + " 行...", false);
         try {
           const debug = Boolean(aiDebugToggle && aiDebugToggle.checked);
           const row = await callAiAnalyzeByLine(cue, debug);
           cueAiRowsByOrder[String(cue.order)] = row;
+          setCueRetryStatus(cue.order, "success");
           cuesCache = cues;
           rebuildAiViewFromCache(cues);
           pruneAssignmentsByCues();
@@ -1529,6 +1605,8 @@ I just want a guy who's good-looking and fun."></textarea>
           hideWordMenu();
           setAiStatus("第 " + String(cue.order).padStart(3, "0") + " 行重试完成。", false);
         } catch (error) {
+          setCueRetryStatus(cue.order, "error");
+          renderPreprocess();
           setAiStatus(error?.message || "单行重试失败", true);
         } finally {
           setAiAnalyzingState(false);
@@ -1715,11 +1793,20 @@ I just want a guy who's good-looking and fun."></textarea>
           preprocessBody.innerHTML = '<p class="preprocess-placeholder">尚未生成高亮预处理文案</p>';
           return;
         }
-        preprocessBody.innerHTML = cuesCache.map((cue) => {
+        const visibleCues = getVisibleCuesForRender();
+        if (visibleCues.length === 0) {
+          preprocessBody.innerHTML = aiAnalyzing
+            ? '<p class="preprocess-placeholder">AI 正在逐行处理中，等待第 001 行完成后展示...</p>'
+            : '<p class="preprocess-placeholder">暂无可展示内容</p>';
+          return;
+        }
+        preprocessBody.innerHTML = visibleCues.map((cue) => {
           const meta = "[" + String(cue.order).padStart(3, "0") + "] " + cue.start + " --> " + cue.end;
           const textHtml = buildHighlightedHtml(cue.text, cue.order);
           const zh = String(cueTranslations[String(cue.order)] || "").trim();
           const zhHtml = zh ? '<div class="cue-translation">' + escapeHtml(zh) + "</div>" : "";
+          const retryBtnClass = getRetryButtonClass(cue.order);
+          const retryBtnLabel = getRetryButtonLabel(cue.order);
           return ''
             + '<div class="cue-line" data-cue-order="' + cue.order + '" data-cue-index="' + cue.indexLabel + '">'
             +   '<div class="cue-row">'
@@ -1729,7 +1816,7 @@ I just want a guy who's good-looking and fun."></textarea>
             +       zhHtml
             +     '</div>'
             +     '<div class="cue-actions">'
-            +       '<button type="button" class="line-retry-btn" data-action="retry-line" data-cue-order="' + cue.order + '">重试</button>'
+            +       '<button type="button" class="' + retryBtnClass + '" data-action="retry-line" data-cue-order="' + cue.order + '">' + retryBtnLabel + '</button>'
             +     '</div>'
             +   '</div>'
             + '</div>';
@@ -1857,6 +1944,12 @@ I just want a guy who's good-looking and fun."></textarea>
           if (cueAiRowsByOrder[key]) nextAiRows[key] = cueAiRowsByOrder[key];
         }
         cueAiRowsByOrder = nextAiRows;
+        const nextRetryStatus = {};
+        for (const cue of cuesCache) {
+          const key = String(cue.order);
+          if (cueRetryStatusByOrder[key]) nextRetryStatus[key] = cueRetryStatusByOrder[key];
+        }
+        cueRetryStatusByOrder = nextRetryStatus;
         const nextTranslations = {};
         for (const cue of cuesCache) {
           const key = String(cue.order);
@@ -2149,15 +2242,20 @@ I just want a guy who's good-looking and fun."></textarea>
         try {
           const debug = Boolean(aiDebugToggle && aiDebugToggle.checked);
           cueAiRowsByOrder = {};
+          cueRetryStatusByOrder = {};
           cuesCache = cues;
+          renderPreprocess();
           const failedOrders = [];
           const requestCues = cues.slice(0, 300);
           for (let i = 0; i < requestCues.length; i += 1) {
             const cue = requestCues[i];
+            setCueRetryStatus(cue.order, "running");
+            renderPreprocess();
             setAiStatus("正在分析第 " + String(i + 1) + "/" + String(requestCues.length) + " 行...", false);
             try {
               const row = await callAiAnalyzeByLine(cue, debug);
               cueAiRowsByOrder[String(cue.order)] = row;
+              setCueRetryStatus(cue.order, "success");
               rebuildAiViewFromCache(cues);
               pruneAssignmentsByCues();
               renderConfigList();
@@ -2166,6 +2264,8 @@ I just want a guy who's good-looking and fun."></textarea>
               refreshPreviewText();
             } catch {
               failedOrders.push(cue.order);
+              setCueRetryStatus(cue.order, "error");
+              renderPreprocess();
             }
           }
           const aiRows = Object.values(cueAiRowsByOrder);

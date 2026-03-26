@@ -31,10 +31,29 @@ Rules:
 2) Keep ori_text exactly the same as input text.
 3) zh must be non-empty natural Chinese translation.
 4) Arrays must always exist. Use [] when no item.
-5) hvc must contain only high-value IELTS speaking vocabulary (B2-C1 / academic-leaning). Do not include low-value basic words.
+5) hvc must contain only high-value IELTS speaking vocabulary (B2-C1 / academic-leaning). STRICTLY exclude low-value basic words (A1-B1 common words like good, bad, big, small, people, thing, very, really, want, need, make, take, get, go, come, nice, etc.). If no valid high-value term exists, return [].
 6) collocations should be meaningful multi-word collocations/phrasal verbs.
 7) sentence_patterns should be reusable spoken sentence patterns.
 8) Do not use placeholders like "...", "N/A", "TBD".`;
+const HVC_LOW_VALUE_WORDS = new Set([
+    "a", "an", "the", "this", "that", "these", "those", "it", "its", "i", "you", "he", "she", "we", "they",
+    "me", "him", "her", "us", "them", "my", "your", "his", "our", "their", "mine", "yours", "hers", "ours", "theirs",
+    "is", "am", "are", "was", "were", "be", "been", "being", "do", "does", "did", "have", "has", "had",
+    "go", "goes", "went", "gone", "come", "comes", "came", "get", "gets", "got", "make", "makes", "made",
+    "take", "takes", "took", "see", "saw", "seen", "look", "looks", "looked", "say", "says", "said",
+    "know", "knew", "known", "think", "thought", "want", "need", "try", "use", "used", "work", "worked",
+    "people", "person", "thing", "things", "stuff", "way", "ways", "time", "times", "day", "days", "year", "years",
+    "man", "men", "woman", "women", "boy", "girl", "child", "children", "friend", "friends", "family", "home",
+    "school", "job", "money", "car", "food", "water", "house", "room", "place", "problem", "question", "answer",
+    "good", "bad", "nice", "great", "cool", "easy", "hard", "simple", "small", "big", "new", "old",
+    "happy", "sad", "angry", "tired", "busy", "ready", "early", "late", "right", "wrong", "same", "different",
+    "very", "really", "just", "also", "maybe", "always", "often", "usually", "sometimes", "today", "tomorrow", "yesterday",
+    "yes", "no", "ok", "okay"
+]);
+const HVC_LOW_VALUE_PHRASES = [
+    /^(a lot of|lots of|kind of|sort of|in the|on the|at the|for the|to the|of the)$/i,
+    /^(i think|i know|i want|i need|we think|we know|you know)$/i
+];
 function extractJsonText(raw) {
     const trimmed = raw.trim();
     if (!trimmed)
@@ -149,6 +168,33 @@ function cleanTerm(raw) {
         .replace(/[\s"'“”‘’()\\[\\]{}.,!?;:]+$/, "");
     return stripped.replace(/\s*[-–—:]\s*.+$/, "").trim();
 }
+function isHighValueHvcTerm(term) {
+    const cleaned = cleanTerm(term);
+    if (!cleaned || isPlaceholderText(cleaned))
+        return false;
+    if (!/[a-zA-Z]/.test(cleaned))
+        return false;
+    if (/[^a-zA-Z\s'/-]/.test(cleaned))
+        return false;
+    const words = (cleaned.toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) || []).filter(Boolean);
+    if (words.length === 0)
+        return false;
+    const phrase = words.join(" ");
+    if (HVC_LOW_VALUE_PHRASES.some((re) => re.test(phrase)))
+        return false;
+    if (words.length === 1) {
+        const w = words[0];
+        if (w.length <= 3)
+            return false;
+        if (HVC_LOW_VALUE_WORDS.has(w))
+            return false;
+        return true;
+    }
+    const lowValueCount = words.filter((w) => HVC_LOW_VALUE_WORDS.has(w)).length;
+    if (lowValueCount >= words.length - 1)
+        return false;
+    return true;
+}
 function toBase64(buffer) {
     const bytes = new Uint8Array(buffer);
     const chunkSize = 0x8000;
@@ -230,10 +276,13 @@ function parseAiAnalyzePayload(payload) {
     const debugEnabled = Boolean(payload?.debug);
     return { texts, debugEnabled };
 }
-function toAiResultStringList(value) {
+function toAiResultStringList(value, predicate) {
     if (!Array.isArray(value))
         return [];
-    return [...new Set(value.map((item) => cleanTerm(String(item || ""))).filter((item) => item && !isPlaceholderText(item)))];
+    return [...new Set(value
+            .map((item) => cleanTerm(String(item || "")))
+            .filter((item) => item && !isPlaceholderText(item))
+            .filter((item) => (predicate ? predicate(item) : true)))];
 }
 function normalizeAiAnalyzeResult(row, input) {
     if (!row || typeof row !== "object")
@@ -248,7 +297,7 @@ function normalizeAiAnalyzeResult(row, input) {
         lineNumber: input.lineNumber,
         ori_text: oriText || input.text,
         zh: !isPlaceholderText(zh) ? zh : "",
-        hvc: toAiResultStringList(item.hvc),
+        hvc: toAiResultStringList(item.hvc, isHighValueHvcTerm),
         collocations: toAiResultStringList(item.collocations),
         sentence_patterns: toAiResultStringList(item.sentence_patterns ?? item.spoken_patterns)
     };
