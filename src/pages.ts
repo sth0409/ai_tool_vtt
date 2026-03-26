@@ -1509,9 +1509,9 @@ I just want a guy who's good-looking and fun."></textarea>
 
       function shellEscapeDoubleQuoted(value) {
         return String(value || "")
-          .replace(/\\/g, "\\\\")
-          .replace(/"/g, "\\\"")
-          .replace(/\$/g, "\\$");
+          .split("\\\\").join("\\\\\\\\")
+          .split('"').join('\\"')
+          .split("$").join("\\$");
       }
 
       function getPathLeaf(pathValue) {
