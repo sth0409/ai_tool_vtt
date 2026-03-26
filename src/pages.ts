@@ -911,6 +911,12 @@ export const ASS_PAGE = `<!doctype html>
         font-size: 12px;
         background: #334155;
       }
+      .line-edit-btn {
+        padding: 6px 10px;
+        font-size: 12px;
+        background: #1d4ed8;
+      }
+      .line-edit-btn:hover { background: #2563eb; }
       .line-retry-btn.is-running { background: #475569; }
       .line-retry-btn.is-success { background: #166534; }
       .line-retry-btn.is-error { background: #991b1b; }
@@ -1274,6 +1280,24 @@ I just want a guy who's good-looking and fun."></textarea>
       </div>
     </div>
 
+    <div id="lineEditModal" class="modal" hidden>
+      <div class="modal-card">
+        <h2 class="modal-title">编辑本行</h2>
+        <div class="field">
+          <label for="lineEditTextInput">英文文本</label>
+          <textarea id="lineEditTextInput" placeholder="输入本行英文"></textarea>
+        </div>
+        <div class="field">
+          <label for="lineEditZhInput">中文翻译</label>
+          <textarea id="lineEditZhInput" placeholder="输入本行中文翻译（可留空）"></textarea>
+        </div>
+        <div class="modal-actions">
+          <button id="cancelLineEditBtn" type="button" class="subtle-btn">取消</button>
+          <button id="saveLineEditBtn" type="button">保存</button>
+        </div>
+      </div>
+    </div>
+
     <script>
       const subtitleInput = document.getElementById("subtitleInput");
       const prepareHighlightBtn = document.getElementById("prepareHighlightBtn");
@@ -1295,6 +1319,11 @@ I just want a guy who's good-looking and fun."></textarea>
       const configColorPicker = document.getElementById("configColorPicker");
       const cancelConfigBtn = document.getElementById("cancelConfigBtn");
       const saveConfigBtn = document.getElementById("saveConfigBtn");
+      const lineEditModal = document.getElementById("lineEditModal");
+      const lineEditTextInput = document.getElementById("lineEditTextInput");
+      const lineEditZhInput = document.getElementById("lineEditZhInput");
+      const cancelLineEditBtn = document.getElementById("cancelLineEditBtn");
+      const saveLineEditBtn = document.getElementById("saveLineEditBtn");
 
       const defaultColor = document.getElementById("defaultColor");
       const outlineColor = document.getElementById("outlineColor");
@@ -1333,6 +1362,7 @@ I just want a guy who's good-looking and fun."></textarea>
       ];
       let assignments = [];
       let selectedContext = null;
+      let editingCueOrder = null;
       let aiAnalyzing = false;
       let aiLogs = [];
       const AI_HVC_LOW_VALUE_WORDS = new Set([
@@ -1412,7 +1442,7 @@ I just want a guy who's good-looking and fun."></textarea>
       function setAiAnalyzingState(active) {
         aiAnalyzing = active;
         if (aiClassifyBtn) aiClassifyBtn.disabled = active;
-        preprocessBody.querySelectorAll(".line-retry-btn").forEach((btn) => {
+        preprocessBody.querySelectorAll(".line-retry-btn, .line-edit-btn").forEach((btn) => {
           if (btn instanceof HTMLButtonElement) btn.disabled = active;
         });
         renderPreprocess();
@@ -1586,6 +1616,19 @@ I just want a guy who's good-looking and fun."></textarea>
         };
       }
 
+      function sanitizeAiRowByCueText(row, cueText) {
+        if (!row || typeof row !== "object") return null;
+        const text = String(cueText || "");
+        const filterTerms = (list) => toUniqueTerms(list).filter((term) => canVisuallyHighlightTerm(term, text));
+        return {
+          ...row,
+          hvc: filterTerms(row.hvc).filter((term) => isHighValueHvcTerm(term)),
+          collocations: filterTerms(row.collocations),
+          spoken_patterns: filterTerms(row.spoken_patterns),
+          expressions: filterTerms(row.expressions)
+        };
+      }
+
       function getVisibleCuesForRender() {
         if (!Array.isArray(cuesCache) || cuesCache.length === 0) return [];
         if (!aiAnalyzing) return cuesCache;
@@ -1723,6 +1766,68 @@ I just want a guy who's good-looking and fun."></textarea>
           });
         }
         return cues;
+      }
+
+      function serializeCueBlocks(cues) {
+        if (!Array.isArray(cues) || cues.length === 0) return "";
+        return cues.map((cue, idx) => {
+          const indexNum = Number(cue?.indexLabel);
+          const label = Number.isFinite(indexNum) ? Math.round(indexNum) : (idx + 1);
+          const header = "[" + String(label).padStart(3, "0") + "] " + cue.start + " --> " + cue.end;
+          return header + "\\n" + String(cue.text || "").trim();
+        }).join("\\n\\n");
+      }
+
+      function syncAssignmentsForCueText(cueOrder, cueText) {
+        const nextText = String(cueText || "");
+        assignments = assignments.filter((item) => {
+          if (item.cueOrder !== cueOrder) return true;
+          return canVisuallyHighlightTerm(item.word, nextText);
+        });
+      }
+
+      function closeLineEditModal() {
+        editingCueOrder = null;
+        if (lineEditModal) lineEditModal.hidden = true;
+      }
+
+      function openLineEditModal(cueOrder) {
+        if (!(lineEditModal instanceof HTMLElement)) return;
+        const cue = cuesCache.find((item) => item.order === cueOrder) || null;
+        if (!cue) return;
+        editingCueOrder = cueOrder;
+        if (lineEditTextInput) lineEditTextInput.value = String(cue.text || "");
+        if (lineEditZhInput) lineEditZhInput.value = String(cueTranslations[String(cueOrder)] || "");
+        lineEditModal.hidden = false;
+        if (lineEditTextInput) lineEditTextInput.focus();
+      }
+
+      function saveEditedCue() {
+        if (aiAnalyzing) return;
+        if (!Number.isFinite(editingCueOrder)) return;
+        const cueOrder = Math.round(Number(editingCueOrder));
+        const cue = cuesCache.find((item) => item.order === cueOrder) || null;
+        if (!cue) return closeLineEditModal();
+        const nextText = String(lineEditTextInput ? lineEditTextInput.value : cue.text).trim();
+        const nextZh = String(lineEditZhInput ? lineEditZhInput.value : "").trim();
+        cue.text = nextText;
+        if (nextZh) cueTranslations[String(cueOrder)] = nextZh;
+        else delete cueTranslations[String(cueOrder)];
+        if (cueAiRowsByOrder[String(cueOrder)]) {
+          const nextRow = sanitizeAiRowByCueText(cueAiRowsByOrder[String(cueOrder)], nextText);
+          if (nextRow) {
+            nextRow.translation_zh = nextZh;
+            cueAiRowsByOrder[String(cueOrder)] = nextRow;
+          }
+        }
+        syncAssignmentsForCueText(cueOrder, nextText);
+        subtitleInput.value = serializeCueBlocks(cuesCache);
+        renderPreprocess();
+        renderGroupedHighlights();
+        refreshPreviewText();
+        hideWordMenu();
+        setAiStatus("第 " + String(cueOrder).padStart(3, "0") + " 行已手动更新并同步分词高亮。", false);
+        closeLineEditModal();
       }
 
       function assColorToCssHex(assColor) {
@@ -1898,6 +2003,7 @@ I just want a guy who's good-looking and fun."></textarea>
             +       zhHtml
             +     '</div>'
             +     '<div class="cue-actions">'
+            +       '<button type="button" class="line-edit-btn" data-action="edit-line" data-cue-order="' + cue.order + '">编辑</button>'
             +       '<button type="button" class="' + retryBtnClass + '" data-action="retry-line" data-cue-order="' + cue.order + '">' + retryBtnLabel + '</button>'
             +     '</div>'
             +   '</div>'
@@ -2420,10 +2526,14 @@ I just want a guy who's good-looking and fun."></textarea>
       preprocessBody.addEventListener("click", (event) => {
         const target = event.target;
         if (!(target instanceof HTMLElement)) return;
-        if (target.getAttribute("data-action") !== "retry-line") return;
+        const action = target.getAttribute("data-action");
         const cueOrder = Number(target.getAttribute("data-cue-order"));
         if (!Number.isFinite(cueOrder)) return;
-        retrySingleCueAi(Math.round(cueOrder));
+        if (action === "edit-line") {
+          openLineEditModal(Math.round(cueOrder));
+          return;
+        }
+        if (action === "retry-line") retrySingleCueAi(Math.round(cueOrder));
       });
 
       wordMenuActions.addEventListener("click", (event) => {
@@ -2475,6 +2585,12 @@ I just want a guy who's good-looking and fun."></textarea>
 
       configModal.addEventListener("mousedown", (event) => {
         if (event.target === configModal) configModal.hidden = true;
+      });
+
+      cancelLineEditBtn.addEventListener("click", closeLineEditModal);
+      saveLineEditBtn.addEventListener("click", saveEditedCue);
+      lineEditModal.addEventListener("mousedown", (event) => {
+        if (event.target === lineEditModal) closeLineEditModal();
       });
 
       pickPreviewVideoBtn.addEventListener("click", () => {
