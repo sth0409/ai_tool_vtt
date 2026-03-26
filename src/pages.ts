@@ -1376,6 +1376,17 @@ I just want a guy who's good-looking and fun."></textarea>
         return stripped.replace(/\\s*[-–—:]\\s*.+$/, "").trim();
       }
 
+      function canVisuallyHighlightTerm(term, cueText) {
+        const candidate = cleanAiTerm(term);
+        const source = String(cueText || "");
+        if (!candidate || !source) return false;
+        try {
+          return new RegExp(escapeRegExp(candidate), "i").test(source);
+        } catch {
+          return false;
+        }
+      }
+
       function isHighValueHvcTerm(term) {
         const cleaned = cleanAiTerm(term);
         if (!cleaned) return false;
@@ -1439,6 +1450,7 @@ I just want a guy who's good-looking and fun."></textarea>
             if (!configId) continue;
             const priority = priorityByKey[bucket.key] || 0;
             for (const term of bucket.terms) {
+              if (!canVisuallyHighlightTerm(term, cue.text)) continue;
               const norm = normalizeWord(term);
               if (!norm) continue;
               const dedupeKey = String(order) + "::" + norm;
@@ -1479,7 +1491,7 @@ I just want a guy who's good-looking and fun."></textarea>
         cueTranslations = nextTranslations;
       }
 
-      function normalizeAiLineRow(rawRow) {
+      function normalizeAiLineRow(rawRow, cueText) {
         if (!rawRow || typeof rawRow !== "object") return null;
         const row = rawRow;
         const lineNumber = Number(row.lineNumber);
@@ -1491,10 +1503,10 @@ I just want a guy who's good-looking and fun."></textarea>
         return {
           order: Math.round(lineNumber) + 1,
           translation_zh: String(row.zh || "").trim(),
-          hvc: toList(row.hvc).filter((term) => isHighValueHvcTerm(term)),
-          collocations: toList(row.collocations),
+          hvc: toList(row.hvc).filter((term) => isHighValueHvcTerm(term) && canVisuallyHighlightTerm(term, cueText)),
+          collocations: toList(row.collocations).filter((term) => canVisuallyHighlightTerm(term, cueText)),
           expressions: [],
-          spoken_patterns: toList(row.sentence_patterns)
+          spoken_patterns: toList(row.sentence_patterns).filter((term) => canVisuallyHighlightTerm(term, cueText))
         };
       }
 
@@ -1537,7 +1549,7 @@ I just want a guy who's good-looking and fun."></textarea>
           throw new Error(String(data?.error || "AI 分析失败"));
         }
         if (data?.debug) renderAiDebug(data.debug);
-        const row = Array.isArray(data?.result) ? normalizeAiLineRow(data.result[0]) : null;
+        const row = Array.isArray(data?.result) ? normalizeAiLineRow(data.result[0], cue.text) : null;
         if (!row) throw new Error("AI 没有返回有效 JSON result。");
         return row;
       }

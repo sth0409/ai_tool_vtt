@@ -174,6 +174,21 @@ function cleanTerm(raw: string): string {
   return stripped.replace(/\s*[-–—:]\s*.+$/, "").trim();
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function canVisuallyHighlightTerm(term: string, sourceText: string): boolean {
+  const candidate = cleanTerm(term);
+  const source = String(sourceText || "");
+  if (!candidate || !source) return false;
+  try {
+    return new RegExp(escapeRegExp(candidate), "i").test(source);
+  } catch {
+    return false;
+  }
+}
+
 function isHighValueHvcTerm(term: string): boolean {
   const cleaned = cleanTerm(term);
   if (!cleaned || isPlaceholderText(cleaned)) return false;
@@ -309,13 +324,14 @@ function normalizeAiAnalyzeResult(row: unknown, input: AiAnalyzeLineInput): AiAn
   if (!Number.isFinite(lineNumber) || Math.round(lineNumber) !== input.lineNumber) return null;
   const oriText = String(item.ori_text ?? "").trim();
   const zh = String(item.zh ?? item.translation_zh ?? "").trim();
+  const sourceText = input.text;
   return {
     lineNumber: input.lineNumber,
     ori_text: oriText || input.text,
     zh: !isPlaceholderText(zh) ? zh : "",
-    hvc: toAiResultStringList(item.hvc, isHighValueHvcTerm),
-    collocations: toAiResultStringList(item.collocations),
-    sentence_patterns: toAiResultStringList(item.sentence_patterns ?? item.spoken_patterns)
+    hvc: toAiResultStringList(item.hvc, (term) => isHighValueHvcTerm(term) && canVisuallyHighlightTerm(term, sourceText)),
+    collocations: toAiResultStringList(item.collocations, (term) => canVisuallyHighlightTerm(term, sourceText)),
+    sentence_patterns: toAiResultStringList(item.sentence_patterns ?? item.spoken_patterns, (term) => canVisuallyHighlightTerm(term, sourceText))
   };
 }
 
