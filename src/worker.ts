@@ -13,209 +13,35 @@ const ASSET_PROXY_ROUTES: Array<{ prefix: string; upstreamBase: string }> = [
   { prefix: "/vendor/ffmpeg-core/", upstreamBase: "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/" }
 ];
 const AI_ASS_MODEL = "@cf/openai/gpt-oss-120b";
-const AI_ASS_ANALYSIS_INSTRUCTIONS = `你是一位专业的雅思（IELTS）英语教师和词汇分析师。你将收到带序号的英语字幕句子，请输出严格 JSON（不要 markdown、不要注释）。
+const AI_ASS_LINE_SYSTEM_PROMPT = `You are an IELTS English coach and subtitle analyzer.
+You must return STRICT JSON only (no markdown, no explanation, no code fences).
 
-分析要求（严格遵守）：
-1) 高价值词汇（HVC）：只提取“雅思口语可加分”的 B2-C1 词汇。必须排除 A1-B1 基础词（如 good, bad, big, small, nice, thing, people, very, really, get, make, do, go, want）。
-   - 优先抽象表达、学术/半学术词、观点表达词、逻辑词（如 perspective, implications, substantial, controversial）。
-   - HVC 尽量是单词，不要输出短语。
-2) 固定搭配/短语动词（Collocations/Phrasal Verbs）：提取两个及以上单词组成、语义不完全字面化的搭配。
-3) 地道表达/俚语（Idioms/Expressions）：提取提升口语流利度的表达。
-4) 口语常用句型（Spoken Patterns）：提取适合口语复用的句型（如 "I'm hooked on ..."）。
-5) 每句话都要给出自然、准确的中文翻译。
+Input format:
+{"texts":[{"lineNumber":0,"text":"this is demo text"}]}
 
-输出 JSON 结构（字段名必须一致）：
+Output format (field names must match exactly):
 {
-  "cues": [
+  "result": [
     {
-      "order": 1,
-      "translation_zh": "中文翻译",
+      "lineNumber": 0,
+      "ori_text": "this is demo text",
+      "zh": "Chinese translation",
       "hvc": ["..."],
       "collocations": ["..."],
-      "expressions": ["..."],
-      "spoken_patterns": ["..."]
+      "sentence_patterns": ["..."]
     }
   ]
 }
 
-规则：
-- order 必须与输入序号一致。
-- 所有数组可为空，但必须存在。
-- 不要遗漏句子。
-- 禁止使用省略号或占位符（如 "...", "N/A", "TBD"）。`;
-const AI_ASS_ANALYSIS_INSTRUCTIONS_STRICT = `你是一位专业的雅思（IELTS）英语教师和词汇分析师。你将收到带序号的英语字幕句子，请输出严格 JSON（不要 markdown、不要注释）。
-
-强制要求（必须遵守）：
-1) 高价值词汇（HVC）：只保留“雅思口语加分词”（B2-C1），排除基础词与口语常见简单词。
-2) 固定搭配/短语动词（Collocations/Phrasal Verbs）：提取两个及以上单词组成、语义不完全字面化的搭配。
-3) 地道表达/俚语（Idioms/Expressions）：提取提升口语流利度的表达。
-4) 口语常用句型（Spoken Patterns）：提取适合口语复用的句型（如 "I'm hooked on ..."）。
-5) 每句话都要给出自然、准确的中文翻译。
-6) 每一句必须给出自然、准确的中文翻译 translation_zh（不能为空）。
-7) 不允许使用省略号、占位符、模板字样。
-8) 所有字段必须存在，数组可为空，但 translation_zh 不能空。
-9) order 必须与输入序号一致。
-
-输出 JSON 结构（字段名必须一致）：
-{
-  "cues": [
-    {
-      "order": 1,
-      "translation_zh": "中文翻译",
-      "hvc": ["..."],
-      "collocations": ["..."],
-      "expressions": ["..."],
-      "spoken_patterns": ["..."]
-    }
-  ]
-}`;
-const AI_ASS_ANALYSIS_INSTRUCTIONS_SINGLE = `你是一位专业的雅思（IELTS）英语教师和词汇分析师。你将收到 1 句英文字幕，必须输出严格 JSON（不要 markdown、不要注释）。
-
-强制要求：
-1) 高价值词汇（HVC）：只保留“雅思口语加分词”（B2-C1），排除基础词与口语常见简单词。
-2) 固定搭配/短语动词（Collocations/Phrasal Verbs）：提取两个及以上单词组成、语义不完全字面化的搭配。
-3) 地道表达/俚语（Idioms/Expressions）：提取提升口语流利度的表达。
-4) 口语常用句型（Spoken Patterns）：提取适合口语复用的句型（如 "I'm hooked on ..."）。
-5) 每句话都要给出自然、准确的中文翻译。
-6) translation_zh 必须是自然、准确的中文翻译，不能为空。
-7) 如果能判断高价值词/搭配/表达，请填写；否则留空数组。
-8) 只输出 1 个 cues 元素，order 必须与输入序号一致。
-9) 禁止使用省略号或占位符（如 "...", "N/A", "TBD"）。
-
-输出 JSON 结构（字段名必须一致）：
-{
-  "cues": [
-    {
-      "order": 1,
-      "translation_zh": "中文翻译",
-      "hvc": [],
-      "collocations": [],
-      "expressions": [],
-      "spoken_patterns": []
-    }
-  ]
-}`;
-const AI_ASS_TRANSLATION_ONLY_INSTRUCTIONS = `你是专业英译中翻译。你将收到 1 句英文字幕，请输出严格 JSON（不要 markdown、不要注释）。
-
-强制要求：
-1) 只输出 translation_zh 字段，不能为空。
-2) 禁止使用省略号或占位符（如 "...", "N/A", "TBD"）。
-
-输出 JSON 结构：
-{
-  "translation_zh": "中文翻译"
-}`;
-const AI_ASS_CLASSIFY_ONLY_INSTRUCTIONS = `你是一位专业的雅思（IELTS）英语教师和词汇分析师。你将收到带序号的英语字幕句子，请只做分类并输出严格 JSON（不要 markdown、不要注释）。
-
-分类要求（严格）：
-1) hvc：只保留“雅思口语可加分”的 B2-C1 单词，排除基础词（A1-B1）和过于简单词。
-2) collocations：固定搭配/短语动词。
-3) spoken_patterns：口语常用句型。
-4) expressions 可以作为补充表达，但前端会按优先级并入口语句型。
-5) 不输出中文翻译，translation_zh 固定为 ""。
-6) order 必须与输入序号一致，不可遗漏。
-
-输出 JSON 结构：
-{
-  "cues": [
-    {
-      "order": 1,
-      "translation_zh": "",
-      "hvc": [],
-      "collocations": [],
-      "expressions": [],
-      "spoken_patterns": []
-    }
-  ]
-}`;
-const AI_ASS_TRANSLATE_BATCH_INSTRUCTIONS = `你是专业英译中翻译。你将收到带序号的英文字幕，请逐句翻译并输出严格 JSON（不要 markdown、不要注释）。
-
-要求：
-1) translation_zh 必须是自然、准确、完整的中文翻译，不能为空。
-2) order 必须与输入序号一致，不能遗漏。
-3) 不要输出多余解释。
-
-输出 JSON 结构：
-{
-  "cues": [
-    {
-      "order": 1,
-      "translation_zh": "中文翻译",
-      "hvc": [],
-      "collocations": [],
-      "expressions": [],
-      "spoken_patterns": []
-    }
-  ]
-}`;
-
-type AiAssCueAnalysis = {
-  order: number;
-  translation_zh: string;
-  hvc: string[];
-  collocations: string[];
-  expressions: string[];
-  spoken_patterns: string[];
-};
-
-const IELTS_BASIC_WORDS = new Set([
-  "a", "an", "the", "and", "or", "but", "if", "then", "so", "because",
-  "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "them",
-  "is", "am", "are", "was", "were", "be", "been", "being", "do", "does", "did",
-  "have", "has", "had", "go", "goes", "went", "come", "came", "get", "got",
-  "make", "made", "take", "took", "put", "say", "said", "tell", "told",
-  "want", "need", "like", "love", "hate", "feel", "think", "know", "see", "look",
-  "use", "used", "try", "find", "give", "work", "play", "help", "talk",
-  "good", "bad", "nice", "great", "small", "big", "easy", "hard", "new", "old",
-  "important", "interesting", "happy", "sad", "thing", "stuff", "people", "person",
-  "man", "woman", "boy", "girl", "child", "children", "friend", "family", "home",
-  "school", "job", "money", "time", "day", "year", "week", "today", "tomorrow",
-  "really", "very", "just", "maybe", "also", "always", "often", "sometimes", "never"
-]);
-
-function isLikelyIeltsHvc(term: string): boolean {
-  const raw = cleanTerm(term).toLowerCase();
-  if (!raw || isPlaceholderText(raw)) return false;
-  if (raw.includes(" ")) return false;
-
-  const word = raw.replace(/[^a-z-]/g, "");
-  if (!word) return false;
-  if (IELTS_BASIC_WORDS.has(word)) return false;
-  if (word.length <= 3) return false;
-  if (word.length >= 8) return true;
-
-  // Typical B2-C1 morphology markers.
-  if (/(tion|sion|ment|ness|ship|ity|ence|ance|able|ible|ative|itive|ious|eous|ical|ology|ism|ist|ize|ise|ward|wise|scope|claim|plex|duct|gress|clude|voke|strain)$/i.test(word)) {
-    return true;
-  }
-  if (/^(inter|trans|sub|super|under|over|anti|auto|multi|micro|macro|pre|post)/i.test(word) && word.length >= 6) {
-    return true;
-  }
-  return word.length >= 6;
-}
-
-function filterIeltsHvcTerms(terms: string[]): string[] {
-  return [...new Set(terms.map((item) => cleanTerm(item)).filter((item) => isLikelyIeltsHvc(item)))];
-}
-
-function collectStringValues(value: unknown): string[] {
-  if (typeof value === "string") return [value];
-  if (Array.isArray(value)) return value.flatMap((item) => collectStringValues(item));
-  if (!value || typeof value !== "object") return [];
-
-  const obj = value as Record<string, unknown>;
-  const keys = [
-    "response",
-    "text",
-    "content",
-    "output_text",
-    "generated_text"
-  ];
-  const direct = keys.flatMap((key) => collectStringValues(obj[key]));
-  const nested = Object.values(obj).flatMap((item) => collectStringValues(item));
-  return [...direct, ...nested];
-}
-
+Rules:
+1) Keep lineNumber exactly the same as input.
+2) Keep ori_text exactly the same as input text.
+3) zh must be non-empty natural Chinese translation.
+4) Arrays must always exist. Use [] when no item.
+5) hvc should prioritize IELTS speaking B2-C1 vocabulary.
+6) collocations should be meaningful multi-word collocations/phrasal verbs.
+7) sentence_patterns should be reusable spoken sentence patterns.
+8) Do not use placeholders like "...", "N/A", "TBD".`;
 function extractJsonText(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -318,62 +144,6 @@ function isPlaceholderText(value: string): boolean {
   return false;
 }
 
-function decodeJsonStringLiteral(raw: string): string {
-  try {
-    return JSON.parse(`"${raw}"`);
-  } catch {
-    return raw;
-  }
-}
-
-function extractTranslationFromText(rawText: string): string {
-  const text = String(rawText || "").trim();
-  if (!text) return "";
-
-  const fullJson = extractJsonText(text);
-  if (fullJson) {
-    try {
-      const parsed = JSON.parse(fullJson) as Record<string, unknown>;
-      const direct = findTranslationField(parsed);
-      if (direct && !isPlaceholderText(direct)) return direct;
-    } catch {
-      // ignore and continue
-    }
-  }
-
-  const objectMatches = text.match(/\{[\s\S]*?\}/g) || [];
-  for (const block of objectMatches) {
-    try {
-      const parsed = JSON.parse(block) as Record<string, unknown>;
-      const direct = findTranslationField(parsed);
-      if (direct && !isPlaceholderText(direct)) return direct;
-    } catch {
-      // ignore parse failure for this block
-    }
-  }
-
-  const m = text.match(/"translation_zh"\s*:\s*"((?:\\.|[^"\\])*)"/i);
-  if (m?.[1]) {
-    const decoded = decodeJsonStringLiteral(m[1]).trim();
-    if (decoded && !isPlaceholderText(decoded)) return decoded;
-  }
-
-  return "";
-}
-
-function pickStringField(row: Record<string, unknown>, keys: string[]): string {
-  for (const key of keys) {
-    const value = row[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-    if (typeof value === "number") return String(value);
-    if (value && typeof value === "object") {
-      const nested = collectStringValues(value).map((item) => item.trim()).filter(Boolean);
-      if (nested.length > 0) return nested[0];
-    }
-  }
-  return "";
-}
-
 function cleanTerm(raw: string): string {
   const trimmed = String(raw || "").replace(/\s+/g, " ").trim();
   if (!trimmed) return "";
@@ -381,245 +151,6 @@ function cleanTerm(raw: string): string {
     .replace(/^[\s"'“”‘’()\\[\\]{}.,!?;:]+/, "")
     .replace(/[\s"'“”‘’()\\[\\]{}.,!?;:]+$/, "");
   return stripped.replace(/\s*[-–—:]\s*.+$/, "").trim();
-}
-
-function toStringList(value: unknown): string[] {
-  if (typeof value === "string") {
-    const cleaned = cleanTerm(value);
-    return cleaned ? [cleaned] : [];
-  }
-  if (Array.isArray(value)) {
-    const list = value
-      .flatMap((item) => toStringList(item))
-      .map((item) => cleanTerm(item))
-      .filter(Boolean);
-    return [...new Set(list)];
-  }
-  if (value && typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    const keys = ["items", "values", "list", "words", "phrases", "terms"];
-    for (const key of keys) {
-      if (obj[key]) return toStringList(obj[key]);
-    }
-  }
-  return [];
-}
-
-function normalizeAiAssCues(value: unknown): AiAssCueAnalysis[] {
-  if (!Array.isArray(value)) return [];
-  const cues: AiAssCueAnalysis[] = [];
-  for (const item of value) {
-    if (!item || typeof item !== "object") continue;
-    const row = item as Record<string, unknown>;
-    const order = Number(row.order);
-    if (!Number.isFinite(order)) continue;
-    const translation = pickStringField(row, [
-      "translation_zh",
-      "translation",
-      "translation_cn",
-      "translation_zh_cn",
-      "translationZh",
-      "translationZH",
-      "zh",
-      "cn",
-      "chinese"
-    ]);
-    const hvc = filterIeltsHvcTerms(toStringList(
-      row.hvc
-      ?? row.HVC
-      ?? row.high_value_vocab
-      ?? row.academic_vocab
-      ?? row.academic_vocabulary
-      ?? row.core_vocab
-      ?? row.core_vocabulary
-      ?? row.key_words
-      ?? row.keywords
-      ?? row.vocabulary
-    ));
-    const collocations = toStringList(
-      row.collocations
-      ?? row.collocation
-      ?? row.phrasal_verbs
-      ?? row.phrasalVerbs
-      ?? row.phrases
-      ?? row.collocations_phrasal_verbs
-      ?? row.phrasal_verbs_collocations
-    );
-    const expressions = toStringList(
-      row.expressions
-      ?? row.expression
-      ?? row.idioms
-      ?? row.idiom
-      ?? row.slang
-      ?? row.idiom_expressions
-      ?? row.expressions_idioms
-    );
-    const spokenPatterns = toStringList(
-      row.spoken_patterns
-      ?? row.spokenPatterns
-      ?? row.patterns
-      ?? row.sentence_patterns
-      ?? row.sentencePatterns
-      ?? row.oral_patterns
-      ?? row.structures
-    );
-    cues.push({
-      order: Math.round(order),
-      translation_zh: translation,
-      hvc,
-      collocations,
-      expressions,
-      spoken_patterns: spokenPatterns
-    });
-  }
-  return cues;
-}
-
-function parseAiAssAnalysis(result: Record<string, unknown>): AiAssCueAnalysis[] {
-  const parseFromUnknown = (value: unknown, depth = 0): AiAssCueAnalysis[] => {
-    if (depth > 4 || value == null) return [];
-
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const hit = parseFromUnknown(item, depth + 1);
-        if (hit.length > 0) return hit;
-      }
-      return [];
-    }
-
-    if (typeof value === "string") {
-      const candidates = collectJsonCandidatesFromText(value);
-      for (const candidate of candidates) {
-        try {
-          const parsed = JSON.parse(candidate) as unknown;
-          const hit = parseFromUnknown(parsed, depth + 1);
-          if (hit.length > 0) return hit;
-        } catch {
-          // ignore and continue
-        }
-      }
-      return [];
-    }
-
-    if (typeof value !== "object") return [];
-    const row = value as Record<string, unknown>;
-
-    if (Array.isArray(row.cues)) {
-      const normalized = normalizeAiAssCues(row.cues);
-      if (normalized.length > 0) return normalized;
-    }
-    const nestedPayload = findCuesPayload(row);
-    if (nestedPayload?.cues) {
-      const normalized = normalizeAiAssCues(nestedPayload.cues);
-      if (normalized.length > 0) return normalized;
-    }
-
-    const priorityKeys = ["response", "output_text", "text", "content", "generated_text", "choices"];
-    for (const key of priorityKeys) {
-      const hit = parseFromUnknown(row[key], depth + 1);
-      if (hit.length > 0) return hit;
-    }
-
-    for (const child of Object.values(row)) {
-      const hit = parseFromUnknown(child, depth + 1);
-      if (hit.length > 0) return hit;
-    }
-    return [];
-  };
-
-  return parseFromUnknown(result);
-}
-
-function findCuesPayload(value: unknown): { cues: unknown[] } | null {
-  if (!value) return null;
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const hit = findCuesPayload(item);
-      if (hit) return hit;
-    }
-    return null;
-  }
-  if (typeof value !== "object") return null;
-  const obj = value as Record<string, unknown>;
-  if (Array.isArray(obj.cues)) return { cues: obj.cues };
-  for (const child of Object.values(obj)) {
-    const hit = findCuesPayload(child);
-    if (hit) return hit;
-  }
-  return null;
-}
-
-function findTranslationField(value: unknown): string {
-  if (!value) return "";
-  if (typeof value === "string") return "";
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const hit = findTranslationField(item);
-      if (hit) return hit;
-    }
-    return "";
-  }
-  if (typeof value !== "object") return "";
-  const obj = value as Record<string, unknown>;
-  const direct = String(
-    obj.translation_zh
-    ?? obj.translation
-    ?? obj.translation_cn
-    ?? obj.translation_zh_cn
-    ?? obj.zh
-    ?? obj.cn
-    ?? ""
-  ).trim();
-  if (direct && !isPlaceholderText(direct)) return direct;
-  for (const child of Object.values(obj)) {
-    const hit = findTranslationField(child);
-    if (hit) return hit;
-  }
-  return "";
-}
-
-function extractTranslationText(result: Record<string, unknown>): string {
-  const directField = findTranslationField(result);
-  if (directField) return directField;
-
-  const choices = Array.isArray(result.choices) ? result.choices : [];
-  for (const choice of choices) {
-    if (!choice || typeof choice !== "object") continue;
-    const text = String((choice as Record<string, unknown>).text ?? "").trim();
-    const hit = extractTranslationFromText(text);
-    if (hit) return hit;
-  }
-
-  const outputText = String(result.output_text ?? result.text ?? "").trim();
-  if (outputText) {
-    const hit = extractTranslationFromText(outputText);
-    if (hit) return hit;
-  }
-
-  const direct = collectStringValues(result)
-    .map((item) => String(item || "").trim())
-    .filter((item) => item && !isPlaceholderText(item));
-  for (const candidateText of direct) {
-    const hit = extractTranslationFromText(candidateText);
-    if (hit) return hit;
-  }
-  return "";
-}
-
-function cueHasAnyValue(cue: AiAssCueAnalysis): boolean {
-  return Boolean(
-    cue.translation_zh
-    || cue.hvc.length > 0
-    || cue.collocations.length > 0
-    || cue.expressions.length > 0
-    || cue.spoken_patterns.length > 0
-  );
-}
-
-function isMostlyEmpty(cues: AiAssCueAnalysis[], threshold = 0.6): boolean {
-  if (cues.length === 0) return true;
-  const emptyCount = cues.filter((cue) => !cueHasAnyValue(cue)).length;
-  return emptyCount / cues.length >= threshold;
 }
 
 function toBase64(buffer: ArrayBuffer): string {
@@ -686,26 +217,116 @@ function compactAiRawForDebug(value: unknown): Record<string, unknown> {
   };
 }
 
-function parseAiAssRequestPayload(payload: unknown): {
-  cues: Array<{ order: number; text: string }>;
+type AiAnalyzeLineInput = { lineNumber: number; text: string };
+type AiAnalyzeLineResult = {
+  lineNumber: number;
+  ori_text: string;
+  zh: string;
+  hvc: string[];
+  collocations: string[];
+  sentence_patterns: string[];
+};
+
+function parseAiAnalyzePayload(payload: unknown): {
+  texts: AiAnalyzeLineInput[];
   debugEnabled: boolean;
 } {
-  const rows = Array.isArray((payload as Record<string, unknown>)?.cues)
-    ? ((payload as Record<string, unknown>).cues as unknown[])
+  const rows = Array.isArray((payload as Record<string, unknown>)?.texts)
+    ? ((payload as Record<string, unknown>).texts as unknown[])
     : [];
-  const cues = rows
+  const texts = rows
     .map((item) => {
       if (!item || typeof item !== "object") return null;
       const row = item as Record<string, unknown>;
-      const order = Number(row.order);
+      const lineNumber = Number(row.lineNumber);
       const text = String(row.text ?? "").replace(/\s+/g, " ").trim();
-      if (!Number.isFinite(order) || !text) return null;
-      return { order: Math.round(order), text: text.slice(0, 400) };
+      if (!Number.isFinite(lineNumber) || lineNumber < 0 || !text) return null;
+      return { lineNumber: Math.round(lineNumber), text: text.slice(0, 600) };
     })
-    .filter((item): item is { order: number; text: string } => Boolean(item))
+    .filter((item): item is AiAnalyzeLineInput => Boolean(item))
     .slice(0, 300);
   const debugEnabled = Boolean((payload as Record<string, unknown>)?.debug);
-  return { cues, debugEnabled };
+  return { texts, debugEnabled };
+}
+
+function toAiResultStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((item) => cleanTerm(String(item || ""))).filter((item) => item && !isPlaceholderText(item)))];
+}
+
+function normalizeAiAnalyzeResult(row: unknown, input: AiAnalyzeLineInput): AiAnalyzeLineResult | null {
+  if (!row || typeof row !== "object") return null;
+  const item = row as Record<string, unknown>;
+  const lineNumber = Number(item.lineNumber);
+  if (!Number.isFinite(lineNumber) || Math.round(lineNumber) !== input.lineNumber) return null;
+  const oriText = String(item.ori_text ?? "").trim();
+  const zh = String(item.zh ?? item.translation_zh ?? "").trim();
+  return {
+    lineNumber: input.lineNumber,
+    ori_text: oriText || input.text,
+    zh: !isPlaceholderText(zh) ? zh : "",
+    hvc: toAiResultStringList(item.hvc),
+    collocations: toAiResultStringList(item.collocations),
+    sentence_patterns: toAiResultStringList(item.sentence_patterns ?? item.spoken_patterns)
+  };
+}
+
+function parseAiAnalyzeResponse(raw: Record<string, unknown>, input: AiAnalyzeLineInput): AiAnalyzeLineResult | null {
+  const parseFromUnknown = (value: unknown, depth = 0): AiAnalyzeLineResult | null => {
+    if (depth > 4 || value == null) return null;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const hit = parseFromUnknown(item, depth + 1);
+        if (hit) return hit;
+      }
+      return null;
+    }
+    if (typeof value === "string") {
+      const candidates = collectJsonCandidatesFromText(value);
+      for (const candidate of candidates) {
+        try {
+          const parsed = JSON.parse(candidate) as unknown;
+          const hit = parseFromUnknown(parsed, depth + 1);
+          if (hit) return hit;
+        } catch {
+          // ignore and continue
+        }
+      }
+      return null;
+    }
+    if (typeof value !== "object") return null;
+    const row = value as Record<string, unknown>;
+    if (Array.isArray(row.result)) {
+      for (const item of row.result) {
+        const normalized = normalizeAiAnalyzeResult(item, input);
+        if (normalized) return normalized;
+      }
+    }
+    const direct = normalizeAiAnalyzeResult(row, input);
+    if (direct) return direct;
+    const priorityKeys = ["response", "output_text", "text", "content", "generated_text", "choices"];
+    for (const key of priorityKeys) {
+      const hit = parseFromUnknown(row[key], depth + 1);
+      if (hit) return hit;
+    }
+    for (const child of Object.values(row)) {
+      const hit = parseFromUnknown(child, depth + 1);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return parseFromUnknown(raw);
+}
+
+function buildAiAnalyzePrompt(input: AiAnalyzeLineInput): string {
+  return [
+    AI_ASS_LINE_SYSTEM_PROMPT,
+    "",
+    "Input JSON:",
+    JSON.stringify({ texts: [{ lineNumber: input.lineNumber, text: input.text }] }),
+    "",
+    "Return only valid JSON."
+  ].join("\n");
 }
 
 function resolveAssetProxyPath(pathname: string): { upstreamUrl: string } | null {
@@ -768,209 +389,6 @@ export default {
       });
     }
 
-    if (request.method === "POST" && url.pathname === "/api/ass/ai-classify") {
-      const contentType = request.headers.get("content-type") ?? "";
-      if (!contentType.includes("application/json")) {
-        return json({ error: "请求必须是 application/json" }, 400);
-      }
-      let payload: unknown;
-      try {
-        payload = await request.json();
-      } catch {
-        return json({ error: "JSON 解析失败" }, 400);
-      }
-      const { cues, debugEnabled } = parseAiAssRequestPayload(payload);
-      if (cues.length === 0) return json({ error: "cues 不能为空" }, 400);
-
-      try {
-        const debugTrace: Array<Record<string, unknown>> = [];
-        const merged: Array<{
-          order: number;
-          translation_zh: string;
-          hvc: string[];
-          collocations: string[];
-          expressions: string[];
-          spoken_patterns: string[];
-        }> = [];
-        const failedOrders: number[] = [];
-
-        const hasAnyClass = (row: { hvc: unknown[]; collocations: unknown[]; expressions: unknown[]; spoken_patterns: unknown[] }) =>
-          row.hvc.length > 0 || row.collocations.length > 0 || row.expressions.length > 0 || row.spoken_patterns.length > 0;
-
-        for (const cue of cues) {
-          const runSingleClassify = async (attempt: "first" | "retry") => {
-            const singlePrompt = [
-              AI_ASS_CLASSIFY_ONLY_INSTRUCTIONS,
-              "",
-              "输入：",
-              "[" + String(cue.order).padStart(3, "0") + "] " + cue.text,
-              "",
-              "仅输出 JSON。"
-            ].join("\n");
-            const raw = await env.AI.run(AI_ASS_MODEL, {
-              prompt: singlePrompt,
-              response_format: { type: "json_object" },
-              temperature: attempt === "first" ? 0.2 : 0,
-              max_tokens: 512
-            });
-            const parsed = parseAiAssAnalysis(raw);
-            if (debugEnabled) {
-              debugTrace.push({
-                stage: "single_classify_" + cue.order + "_" + attempt,
-                parsed_count: parsed.length,
-                classified_count: parsed.filter((row) => hasAnyClass(row)).length,
-                raw_preview: toDebugPreview(compactAiRawForDebug(raw), 900)
-              });
-            }
-            const hit = parsed.find((item) => Number(item?.order) === cue.order) ?? parsed[0] ?? null;
-            if (!hit) return null;
-            return {
-              order: cue.order,
-              translation_zh: "",
-              hvc: hit.hvc ?? [],
-              collocations: hit.collocations ?? [],
-              expressions: hit.expressions ?? [],
-              spoken_patterns: hit.spoken_patterns ?? []
-            };
-          };
-
-          let row = await runSingleClassify("first");
-          if (!row || !hasAnyClass(row)) {
-            const retryRow = await runSingleClassify("retry");
-            if (retryRow && (hasAnyClass(retryRow) || !row)) {
-              row = retryRow;
-            }
-          }
-          if (!row) {
-            failedOrders.push(cue.order);
-            row = {
-              order: cue.order,
-              translation_zh: "",
-              hvc: [],
-              collocations: [],
-              expressions: [],
-              spoken_patterns: []
-            };
-          } else if (!hasAnyClass(row)) {
-            failedOrders.push(cue.order);
-          }
-          merged.push(row);
-        }
-
-        if (!merged.some((row) => hasAnyClass(row))) {
-          return json({
-            error: "AI 分类为空，请重试或先打开调试模式查看原始返回。",
-            ...(debugEnabled ? { debug: { trace: debugTrace, merged_preview: toDebugPreview(merged, 1200) } } : {})
-          }, 502);
-        }
-
-        return json({
-          configs: [
-            { key: "hvc", name: "高价值词汇（HVC）", color: "&H0000FFFF" },
-            { key: "collocations", name: "固定搭配/短语动词", color: "&H0032CD32" },
-            { key: "spoken_patterns", name: "口语常用句型", color: "&H00FF00AA" }
-          ],
-          cues: merged,
-          ...(failedOrders.length > 0 ? { warning: "部分句子分类为空", failed_orders: failedOrders } : {}),
-          ...(debugEnabled ? { debug: { trace: debugTrace, merged_preview: toDebugPreview(merged, 1200) } } : {})
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "AI 分类调用失败";
-        return json({ error: message }, 500);
-      }
-    }
-
-    if (request.method === "POST" && url.pathname === "/api/ass/ai-translate") {
-      const contentType = request.headers.get("content-type") ?? "";
-      if (!contentType.includes("application/json")) {
-        return json({ error: "请求必须是 application/json" }, 400);
-      }
-      let payload: unknown;
-      try {
-        payload = await request.json();
-      } catch {
-        return json({ error: "JSON 解析失败" }, 400);
-      }
-      const { cues, debugEnabled } = parseAiAssRequestPayload(payload);
-      if (cues.length === 0) return json({ error: "cues 不能为空" }, 400);
-
-      try {
-        const debugTrace: Array<Record<string, unknown>> = [];
-        const merged: Array<{
-          order: number;
-          translation_zh: string;
-          hvc: string[];
-          collocations: string[];
-          expressions: string[];
-          spoken_patterns: string[];
-        }> = [];
-        const failedOrders: number[] = [];
-
-        for (const cue of cues) {
-          const runSingle = async (attempt: "first" | "retry"): Promise<string> => {
-            const singlePrompt = [
-              AI_ASS_TRANSLATION_ONLY_INSTRUCTIONS,
-              "",
-              "待翻译英文：",
-              cue.text,
-              "",
-              "只输出 JSON，不要输出任何解释。"
-            ].join("\n");
-            const singleRaw = await env.AI.run(AI_ASS_MODEL, {
-              prompt: singlePrompt,
-              response_format: { type: "json_object" },
-              temperature: attempt === "first" ? 0.2 : 0,
-              max_tokens: 256
-            });
-            const zh = extractTranslationText(singleRaw);
-            if (debugEnabled) {
-              debugTrace.push({
-                stage: "single_translation_" + cue.order + "_" + attempt,
-                ok: Boolean(zh),
-                raw_preview: toDebugPreview(compactAiRawForDebug(singleRaw), 900)
-              });
-            }
-            return zh;
-          };
-
-          let zh = await runSingle("first");
-          if (!zh || isPlaceholderText(zh)) {
-            zh = await runSingle("retry");
-          }
-          if (!zh || isPlaceholderText(zh)) {
-            failedOrders.push(cue.order);
-            zh = "";
-          }
-
-          merged.push({
-            order: cue.order,
-            translation_zh: zh,
-            hvc: [],
-            collocations: [],
-            expressions: [],
-            spoken_patterns: []
-          });
-        }
-
-        const hasTranslation = merged.some((cue) => cue.translation_zh);
-        if (!hasTranslation) {
-          return json({
-            error: "AI 翻译为空，请重试",
-            ...(debugEnabled ? { debug: { trace: debugTrace } } : {})
-          }, 502);
-        }
-
-        return json({
-          cues: merged,
-          ...(failedOrders.length > 0 ? { warning: "部分句子翻译失败", failed_orders: failedOrders } : {}),
-          ...(debugEnabled ? { debug: { trace: debugTrace, merged_preview: toDebugPreview(merged, 1200) } } : {})
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "AI 翻译调用失败";
-        return json({ error: message }, 500);
-      }
-    }
-
     if (request.method === "POST" && url.pathname === "/api/ass/ai-analyze") {
       const contentType = request.headers.get("content-type") ?? "";
       if (!contentType.includes("application/json")) {
@@ -983,221 +401,66 @@ export default {
       } catch {
         return json({ error: "JSON 解析失败" }, 400);
       }
-
-      const rows = Array.isArray((payload as Record<string, unknown>)?.cues)
-        ? ((payload as Record<string, unknown>).cues as unknown[])
-        : [];
-      const cues = rows
-        .map((item) => {
-          if (!item || typeof item !== "object") return null;
-          const row = item as Record<string, unknown>;
-          const order = Number(row.order);
-          const text = String(row.text ?? "").replace(/\s+/g, " ").trim();
-          if (!Number.isFinite(order) || !text) return null;
-          return { order: Math.round(order), text: text.slice(0, 400) };
-        })
-        .filter((item): item is { order: number; text: string } => Boolean(item))
-        .slice(0, 300);
-
-      if (cues.length === 0) {
-        return json({ error: "cues 不能为空" }, 400);
-      }
-      const debugEnabled = Boolean((payload as Record<string, unknown>)?.debug);
-      const debugTrace: Array<Record<string, unknown>> = [];
+      const { texts, debugEnabled } = parseAiAnalyzePayload(payload);
+      if (texts.length === 0) return json({ error: "texts 不能为空" }, 400);
 
       try {
-        const buildInput = (subset: { order: number; text: string }[]) => ([
-          "请按要求分析下面英语字幕，并返回严格 JSON：",
-          "",
-          ...subset.map((cue) => "[" + String(cue.order).padStart(3, "0") + "] " + cue.text)
-        ].join("\n"));
+        const debugTrace: Array<Record<string, unknown>> = [];
+        const result: AiAnalyzeLineResult[] = [];
+        const failedLineNumbers: number[] = [];
 
-        const buildPrompt = (instructions: string, inputText: string) => (
-          instructions + "\n\n" + inputText + "\n\n仅输出 JSON。"
-        );
-
-        const runOnce = async (stage: string, instructions: string, inputText: string, maxTokens: number) => {
-          const raw = await env.AI.run(AI_ASS_MODEL, {
-            prompt: buildPrompt(instructions, inputText),
-            response_format: { type: "json_object" },
-            temperature: 0.2,
-            max_tokens: maxTokens
-          });
-          const parsed = parseAiAssAnalysis(raw);
-          if (debugEnabled) {
-            debugTrace.push({
-              stage,
-              parsed_count: parsed.length,
-              non_empty_count: parsed.filter((cue) => cueHasAnyValue(cue)).length,
-              raw_preview: toDebugPreview(compactAiRawForDebug(raw), 900)
+        for (const item of texts) {
+          const runOnce = async (attempt: "first" | "retry"): Promise<AiAnalyzeLineResult | null> => {
+            const raw = await env.AI.run(AI_ASS_MODEL, {
+              prompt: buildAiAnalyzePrompt(item),
+              response_format: { type: "json_object" },
+              temperature: attempt === "first" ? 0.2 : 0,
+              max_tokens: 768
             });
-          }
-          return parsed;
-        };
-        const runTranslation = async (stage: string, inputText: string, maxTokens: number) => {
-          const raw = await env.AI.run(AI_ASS_MODEL, {
-            prompt: buildPrompt(AI_ASS_TRANSLATION_ONLY_INSTRUCTIONS, inputText),
-            response_format: { type: "json_object" },
-            temperature: 0.2,
-            max_tokens: maxTokens
-          });
-          const translation = extractTranslationText(raw);
-          if (debugEnabled) {
-            debugTrace.push({
-              stage,
-              translation_ok: Boolean(translation),
-              raw_preview: toDebugPreview(compactAiRawForDebug(raw), 900)
-            });
-          }
-          return translation;
-        };
-
-        const input = buildInput(cues);
-        let parsedCues = await runOnce("batch_initial", AI_ASS_ANALYSIS_INSTRUCTIONS, input, 4096);
-        let parsedMap = new Map(parsedCues.map((cue) => [cue.order, cue]));
-        let merged = cues.map((cue) => {
-          const hit = parsedMap.get(cue.order);
-          return {
-            order: cue.order,
-            translation_zh: hit?.translation_zh ?? "",
-            hvc: hit?.hvc ?? [],
-            collocations: hit?.collocations ?? [],
-            expressions: hit?.expressions ?? [],
-            spoken_patterns: hit?.spoken_patterns ?? []
-          };
-        });
-
-        if (isMostlyEmpty(merged)) { 
-          parsedCues = await runOnce("batch_strict", AI_ASS_ANALYSIS_INSTRUCTIONS_STRICT, input, 4096);
-          parsedMap = new Map(parsedCues.map((cue) => [cue.order, cue]));
-          merged = cues.map((cue) => {
-            const hit = parsedMap.get(cue.order);
-            return {
-              order: cue.order,
-              translation_zh: hit?.translation_zh ?? "",
-              hvc: hit?.hvc ?? [],
-              collocations: hit?.collocations ?? [],
-              expressions: hit?.expressions ?? [],
-              spoken_patterns: hit?.spoken_patterns ?? []
-            };
-          });
-        }
-
-        if (isMostlyEmpty(merged, 0.8)) {
-          const mergedMap = new Map(merged.map((cue) => [cue.order, cue]));
-          for (const cue of cues) {
-            const current = mergedMap.get(cue.order);
-            if (current && cueHasAnyValue(current)) continue;
-            const singleInput = buildInput([cue]);
-            const singleParsed = await runOnce("single_" + cue.order, AI_ASS_ANALYSIS_INSTRUCTIONS_SINGLE, singleInput, 512);
-            const singleHit = singleParsed.find((item) => Number(item?.order) === cue.order) ?? singleParsed[0] ?? null;
-            let updated = {
-              order: cue.order,
-              translation_zh: (singleHit?.translation_zh ?? current?.translation_zh ?? "") || "",
-              hvc: (singleHit?.hvc && singleHit.hvc.length > 0) ? singleHit.hvc : (current?.hvc ?? []),
-              collocations: (singleHit?.collocations && singleHit.collocations.length > 0) ? singleHit.collocations : (current?.collocations ?? []),
-              expressions: (singleHit?.expressions && singleHit.expressions.length > 0) ? singleHit.expressions : (current?.expressions ?? []),
-              spoken_patterns: (singleHit?.spoken_patterns && singleHit.spoken_patterns.length > 0) ? singleHit.spoken_patterns : (current?.spoken_patterns ?? [])
-            };
-            if (!updated.translation_zh || isPlaceholderText(updated.translation_zh)) {
-              const translationOnly = await runTranslation("translation_only_" + cue.order, singleInput, 256);
-              if (translationOnly) {
-                updated = { ...updated, translation_zh: translationOnly };
-              }
+            const parsed = parseAiAnalyzeResponse(raw, item);
+            if (debugEnabled) {
+              debugTrace.push({
+                stage: "line_" + item.lineNumber + "_" + attempt,
+                ok: Boolean(parsed),
+                parsed_preview: parsed ? toDebugPreview(parsed, 300) : "",
+                raw_preview: toDebugPreview(compactAiRawForDebug(raw), 900)
+              });
             }
-            mergedMap.set(cue.order, updated);
+            return parsed;
+          };
+
+          let row = await runOnce("first");
+          if (!row || !row.zh) row = await runOnce("retry");
+          if (!row || !row.zh) {
+            failedLineNumbers.push(item.lineNumber);
+            row = {
+              lineNumber: item.lineNumber,
+              ori_text: item.text,
+              zh: "",
+              hvc: [],
+              collocations: [],
+              sentence_patterns: []
+            };
           }
-          merged = cues.map((cue) => mergedMap.get(cue.order) ?? {
-            order: cue.order,
-            translation_zh: "",
-            hvc: [],
-            collocations: [],
-            expressions: [],
-            spoken_patterns: []
-          });
+          result.push(row);
         }
 
-        if (isMostlyEmpty(merged, 0.9)) {
+        const successCount = result.filter((item) => Boolean(item.zh)).length;
+        if (successCount === 0) {
           return json({
-            error: "AI 返回为空或占位符过多，请重试",
-            ...(debugEnabled ? { debug: { trace: debugTrace, merged_preview: toDebugPreview(merged, 1200) } } : {})
+            error: "AI 返回为空，请重试。",
+            ...(debugEnabled ? { debug: { trace: debugTrace, merged_preview: toDebugPreview(result, 1200) } } : {})
           }, 502);
         }
 
         return json({
-          configs: [
-            { key: "hvc", name: "高价值词汇（HVC）", color: "&H0000FFFF" },
-            { key: "collocations", name: "固定搭配/短语动词", color: "&H0032CD32" },
-            { key: "spoken_patterns", name: "口语常用句型", color: "&H00FF00AA" }
-          ],
-          cues: merged,
-          ...(debugEnabled ? { debug: { trace: debugTrace, merged_preview: toDebugPreview(merged, 1200) } } : {})
+          result,
+          ...(failedLineNumbers.length > 0 ? { warning: "部分行分析失败", failedLineNumbers } : {}),
+          ...(debugEnabled ? { debug: { trace: debugTrace, merged_preview: toDebugPreview(result, 1200) } } : {})
         });
       } catch (error) {
-        try {
-          const fallbackCues: Array<{
-            order: number;
-            translation_zh: string;
-            hvc: string[];
-            collocations: string[];
-            expressions: string[];
-            spoken_patterns: string[];
-          }> = [];
-          for (const cue of cues) {
-            const prompt = [
-              AI_ASS_TRANSLATION_ONLY_INSTRUCTIONS,
-              "",
-              "输入：",
-              "[" + String(cue.order).padStart(3, "0") + "] " + cue.text,
-              "",
-              "仅输出 JSON。"
-            ].join("\n");
-            const raw = await env.AI.run(AI_ASS_MODEL, {
-              prompt,
-              response_format: { type: "json_object" },
-              temperature: 0.2,
-              max_tokens: 256
-            });
-            const zh = extractTranslationText(raw);
-            if (debugEnabled) {
-              debugTrace.push({
-                stage: "fallback_translation_" + cue.order,
-                translation_ok: Boolean(zh),
-                raw_preview: toDebugPreview(compactAiRawForDebug(raw), 900)
-              });
-            }
-            fallbackCues.push({
-              order: cue.order,
-              translation_zh: zh,
-              hvc: [],
-              collocations: [],
-              expressions: [],
-              spoken_patterns: []
-            });
-          }
-
-          const hasTranslation = fallbackCues.some((cue) => Boolean(cue.translation_zh));
-          if (hasTranslation) {
-            return json({
-              configs: [
-                { key: "hvc", name: "高价值词汇（HVC）", color: "&H0000FFFF" },
-                { key: "collocations", name: "固定搭配/短语动词", color: "&H0032CD32" },
-                { key: "spoken_patterns", name: "口语常用句型", color: "&H00FF00AA" }
-              ],
-              cues: fallbackCues,
-              warning: "分析结果不稳定，已自动降级为逐句翻译兜底。",
-              ...(debugEnabled ? { debug: { trace: debugTrace, merged_preview: toDebugPreview(fallbackCues, 1200) } } : {})
-            });
-          }
-        } catch {
-          // ignore fallback failure and return root error below
-        }
-
         const message = error instanceof Error ? error.message : "AI 分析调用失败";
-        return json({
-          error: message,
-          ...(debugEnabled ? { debug: { trace: debugTrace } } : {})
-        }, 500);
+        return json({ error: message }, 500);
       }
     }
 

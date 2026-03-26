@@ -893,6 +893,24 @@ export const ASS_PAGE = `<!doctype html>
         line-height: 1.5;
       }
       .cue-line:last-child { border-bottom: 0; }
+      .cue-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .cue-main {
+        min-width: 0;
+        flex: 1;
+      }
+      .cue-actions {
+        flex: 0 0 auto;
+      }
+      .line-retry-btn {
+        padding: 6px 10px;
+        font-size: 12px;
+        background: #334155;
+      }
       .cue-meta {
         color: #94a3b8;
         font-size: 12px;
@@ -1088,8 +1106,7 @@ I just want a guy who's good-looking and fun."></textarea>
 
       <div class="actions-row">
         <button id="prepareHighlightBtn" type="button">高亮编辑操作</button>
-        <button id="aiClassifyBtn" type="button">AI 分类（3类高亮）</button>
-        <button id="aiTranslateBtn" type="button">AI 逐句中译</button>
+        <button id="aiClassifyBtn" type="button">AI 智能选词+翻译</button>
         <button id="addConfigBtn" type="button" class="subtle-btn">增加高亮配置</button>
         <label class="checkbox-inline"><input id="aiDebugToggle" type="checkbox" /> 调试模式（显示AI原始返回摘要）</label>
       </div>
@@ -1105,7 +1122,7 @@ I just want a guy who's good-looking and fun."></textarea>
       <section class="result">
         <div class="result-card">
           <h2 class="result-title">高亮预处理文案</h2>
-          <p class="result-tip">点击“高亮编辑操作”后按行显示字幕。鼠标选中单词/短语，会弹出高亮操作面板。</p>
+          <p class="result-tip">点击“高亮编辑操作”后按行显示字幕。鼠标选中单词/短语会弹出操作面板；每行右侧可单独重试 AI。</p>
           <div id="preprocessBody" class="preprocess-panel">
             <p class="preprocess-placeholder">尚未生成高亮预处理文案</p>
           </div>
@@ -1218,7 +1235,6 @@ I just want a guy who's good-looking and fun."></textarea>
       const subtitleInput = document.getElementById("subtitleInput");
       const prepareHighlightBtn = document.getElementById("prepareHighlightBtn");
       const aiClassifyBtn = document.getElementById("aiClassifyBtn");
-      const aiTranslateBtn = document.getElementById("aiTranslateBtn");
       const aiStatus = document.getElementById("aiStatus");
       const aiDebugToggle = document.getElementById("aiDebugToggle");
       const aiDebugBox = document.getElementById("aiDebugBox");
@@ -1263,6 +1279,7 @@ I just want a guy who's good-looking and fun."></textarea>
       let dragState = null;
       let previewVideoMeta = null;
       let cuesCache = [];
+      let cueAiRowsByOrder = {};
       let cueTranslations = {};
       let highlightConfigs = [
         { id: "cfg-default", name: "默认高亮", color: "&H0000FFFF" }
@@ -1306,7 +1323,9 @@ I just want a guy who's good-looking and fun."></textarea>
       function setAiAnalyzingState(active) {
         aiAnalyzing = active;
         if (aiClassifyBtn) aiClassifyBtn.disabled = active;
-        if (aiTranslateBtn) aiTranslateBtn.disabled = active;
+        preprocessBody.querySelectorAll(".line-retry-btn").forEach((btn) => {
+          if (btn instanceof HTMLButtonElement) btn.disabled = active;
+        });
       }
 
       function renderAiDebug(payload) {
@@ -1427,6 +1446,93 @@ I just want a guy who's good-looking and fun."></textarea>
           if (zh) nextTranslations[String(order)] = zh;
         }
         cueTranslations = nextTranslations;
+      }
+
+      function normalizeAiLineRow(rawRow) {
+        if (!rawRow || typeof rawRow !== "object") return null;
+        const row = rawRow;
+        const lineNumber = Number(row.lineNumber);
+        if (!Number.isFinite(lineNumber) || lineNumber < 0) return null;
+        const toList = (value) => {
+          if (!Array.isArray(value)) return [];
+          return value.map((item) => cleanAiTerm(String(item || ""))).filter(Boolean);
+        };
+        return {
+          order: Math.round(lineNumber) + 1,
+          translation_zh: String(row.zh || "").trim(),
+          hvc: toList(row.hvc),
+          collocations: toList(row.collocations),
+          expressions: [],
+          spoken_patterns: toList(row.sentence_patterns)
+        };
+      }
+
+      async function callAiAnalyzeByLine(cue, debug) {
+        const response = await fetch("/api/ass/ai-analyze", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            texts: [{ lineNumber: cue.order - 1, text: cue.text }],
+            debug
+          })
+        });
+        const raw = await response.text();
+        let data = null;
+        try {
+          data = raw ? JSON.parse(raw) : {};
+        } catch {
+          throw new Error("AI 接口返回了不可解析的数据。");
+        }
+        if (!response.ok) {
+          if (data?.debug) renderAiDebug(data.debug);
+          throw new Error(String(data?.error || "AI 分析失败"));
+        }
+        if (data?.debug) renderAiDebug(data.debug);
+        const row = Array.isArray(data?.result) ? normalizeAiLineRow(data.result[0]) : null;
+        if (!row) throw new Error("AI 没有返回有效 JSON result。");
+        return row;
+      }
+
+      function rebuildAiViewFromCache(cues) {
+        const aiRows = cues
+          .map((cue) => cueAiRowsByOrder[String(cue.order)] || null)
+          .filter(Boolean);
+        applyAiAnalysis(cues, aiRows);
+        applyAiTranslations(cues, aiRows);
+      }
+
+      async function retrySingleCueAi(cueOrder) {
+        if (aiAnalyzing) return;
+        const cues = parseCueBlocks(subtitleInput.value || "");
+        if (cues.length === 0) {
+          setAiStatus("请先输入有效字幕分段，再执行 AI。", true);
+          return;
+        }
+        const cue = cues.find((item) => item.order === cueOrder);
+        if (!cue) {
+          setAiStatus("未找到该行字幕，请先重新点击“高亮编辑操作”。", true);
+          return;
+        }
+        setAiAnalyzingState(true);
+        setAiStatus("正在重试第 " + String(cue.order).padStart(3, "0") + " 行...", false);
+        try {
+          const debug = Boolean(aiDebugToggle && aiDebugToggle.checked);
+          const row = await callAiAnalyzeByLine(cue, debug);
+          cueAiRowsByOrder[String(cue.order)] = row;
+          cuesCache = cues;
+          rebuildAiViewFromCache(cues);
+          pruneAssignmentsByCues();
+          renderConfigList();
+          renderPreprocess();
+          renderGroupedHighlights();
+          refreshPreviewText();
+          hideWordMenu();
+          setAiStatus("第 " + String(cue.order).padStart(3, "0") + " 行重试完成。", false);
+        } catch (error) {
+          setAiStatus(error?.message || "单行重试失败", true);
+        } finally {
+          setAiAnalyzingState(false);
+        }
       }
 
       function parseTimeToSeconds(timeWithMs) {
@@ -1614,7 +1720,19 @@ I just want a guy who's good-looking and fun."></textarea>
           const textHtml = buildHighlightedHtml(cue.text, cue.order);
           const zh = String(cueTranslations[String(cue.order)] || "").trim();
           const zhHtml = zh ? '<div class="cue-translation">中译：' + escapeHtml(zh) + "</div>" : "";
-          return '<div class="cue-line" data-cue-order="' + cue.order + '" data-cue-index="' + cue.indexLabel + '"><div class="cue-meta">' + escapeHtml(meta) + '</div><div class="cue-text">' + textHtml + "</div>" + zhHtml + "</div>";
+          return ''
+            + '<div class="cue-line" data-cue-order="' + cue.order + '" data-cue-index="' + cue.indexLabel + '">'
+            +   '<div class="cue-row">'
+            +     '<div class="cue-main">'
+            +       '<div class="cue-meta">' + escapeHtml(meta) + '</div>'
+            +       '<div class="cue-text">' + textHtml + "</div>"
+            +       zhHtml
+            +     '</div>'
+            +     '<div class="cue-actions">'
+            +       '<button type="button" class="line-retry-btn" data-action="retry-line" data-cue-order="' + cue.order + '">重试</button>'
+            +     '</div>'
+            +   '</div>'
+            + '</div>';
         }).join("");
       }
 
@@ -1733,6 +1851,12 @@ I just want a guy who's good-looking and fun."></textarea>
       function pruneAssignmentsByCues() {
         const valid = new Set(cuesCache.map((cue) => cue.order));
         assignments = assignments.filter((item) => valid.has(item.cueOrder));
+        const nextAiRows = {};
+        for (const cue of cuesCache) {
+          const key = String(cue.order);
+          if (cueAiRowsByOrder[key]) nextAiRows[key] = cueAiRowsByOrder[key];
+        }
+        cueAiRowsByOrder = nextAiRows;
         const nextTranslations = {};
         for (const cue of cuesCache) {
           const key = String(cue.order);
@@ -2016,98 +2140,47 @@ I just want a guy who's good-looking and fun."></textarea>
         if (aiAnalyzing) return;
         const cues = parseCueBlocks(subtitleInput.value || "");
         if (cues.length === 0) {
-          setAiStatus("请先输入有效字幕分段，再执行 AI 分类。", true);
+          setAiStatus("请先输入有效字幕分段，再执行 AI 分析。", true);
           return;
         }
-        const requestCues = cues.slice(0, 300).map((cue) => ({ order: cue.order, text: cue.text }));
         setAiAnalyzingState(true);
-        setAiStatus("正在调用 AI：生成 3 类高亮配置...", false);
+        setAiStatus("正在调用 AI：逐行智能选词+翻译...", false);
         renderAiDebug(null);
         try {
           const debug = Boolean(aiDebugToggle && aiDebugToggle.checked);
-          const response = await fetch("/api/ass/ai-classify", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ cues: requestCues, debug })
-          });
-          const raw = await response.text();
-          let data = null;
-          try {
-            data = raw ? JSON.parse(raw) : {};
-          } catch {
-            throw new Error("AI 接口返回了不可解析的数据。");
+          const rowsByOrder = {};
+          const failedOrders = [];
+          const requestCues = cues.slice(0, 300);
+          for (let i = 0; i < requestCues.length; i += 1) {
+            const cue = requestCues[i];
+            setAiStatus("正在分析第 " + String(i + 1) + "/" + String(requestCues.length) + " 行...", false);
+            try {
+              const row = await callAiAnalyzeByLine(cue, debug);
+              rowsByOrder[String(cue.order)] = row;
+            } catch {
+              failedOrders.push(cue.order);
+            }
           }
-          if (!response.ok) {
-            if (data?.debug) renderAiDebug(data.debug);
-            throw new Error(String(data?.error || "AI 分类失败"));
+          const aiRows = Object.values(rowsByOrder);
+          if (aiRows.length === 0) {
+            throw new Error("AI 没有返回有效结果，请重试。");
           }
-          const aiCues = Array.isArray(data?.cues) ? data.cues : [];
-          if (aiCues.length === 0) {
-            if (data?.debug) renderAiDebug(data.debug);
-            throw new Error("AI 没有返回有效分类结果，请重试。");
-          }
-          if (data?.debug) renderAiDebug(data.debug);
-
+          cueAiRowsByOrder = rowsByOrder;
           cuesCache = cues;
-          applyAiAnalysis(cues, aiCues);
+          rebuildAiViewFromCache(cues);
           pruneAssignmentsByCues();
           renderConfigList();
           renderPreprocess();
           renderGroupedHighlights();
           refreshPreviewText();
           hideWordMenu();
-          setAiStatus("AI 分类完成：已更新 3 类高亮配置。", false);
+          if (failedOrders.length > 0) {
+            setAiStatus("AI 完成：成功 " + aiRows.length + " 行，失败 " + failedOrders.length + " 行（可点击对应行右侧重试）。", false);
+          } else {
+            setAiStatus("AI 完成：已更新逐行选词与翻译。", false);
+          }
         } catch (error) {
-          setAiStatus(error?.message || "AI 分类失败", true);
-        } finally {
-          setAiAnalyzingState(false);
-        }
-      });
-
-      if (aiTranslateBtn) aiTranslateBtn.addEventListener("click", async () => {
-        if (aiAnalyzing) return;
-        const cues = parseCueBlocks(subtitleInput.value || "");
-        if (cues.length === 0) {
-          setAiStatus("请先输入有效字幕分段，再执行 AI 翻译。", true);
-          return;
-        }
-        const requestCues = cues.slice(0, 300).map((cue) => ({ order: cue.order, text: cue.text }));
-        setAiAnalyzingState(true);
-        setAiStatus("正在调用 AI：逐句翻译为中文...", false);
-        renderAiDebug(null);
-        try {
-          const debug = Boolean(aiDebugToggle && aiDebugToggle.checked);
-          const response = await fetch("/api/ass/ai-translate", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ cues: requestCues, debug })
-          });
-          const raw = await response.text();
-          let data = null;
-          try {
-            data = raw ? JSON.parse(raw) : {};
-          } catch {
-            throw new Error("AI 接口返回了不可解析的数据。");
-          }
-          if (!response.ok) {
-            if (data?.debug) renderAiDebug(data.debug);
-            throw new Error(String(data?.error || "AI 翻译失败"));
-          }
-          const aiCues = Array.isArray(data?.cues) ? data.cues : [];
-          if (aiCues.length === 0) {
-            if (data?.debug) renderAiDebug(data.debug);
-            throw new Error("AI 没有返回有效翻译结果，请重试。");
-          }
-          if (data?.debug) renderAiDebug(data.debug);
-
-          cuesCache = cues;
-          applyAiTranslations(cues, aiCues);
-          pruneAssignmentsByCues();
-          renderPreprocess();
-          refreshPreviewText();
-          setAiStatus("AI 翻译完成：已更新逐句中文。", false);
-        } catch (error) {
-          setAiStatus(error?.message || "AI 翻译失败", true);
+          setAiStatus(error?.message || "AI 分析失败", true);
         } finally {
           setAiAnalyzingState(false);
         }
@@ -2151,6 +2224,15 @@ I just want a guy who's good-looking and fun."></textarea>
           const rect = range.getBoundingClientRect();
           showWordMenu(rect, selectedContext);
         }, 0);
+      });
+
+      preprocessBody.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        if (target.getAttribute("data-action") !== "retry-line") return;
+        const cueOrder = Number(target.getAttribute("data-cue-order"));
+        if (!Number.isFinite(cueOrder)) return;
+        retrySingleCueAi(Math.round(cueOrder));
       });
 
       wordMenuActions.addEventListener("click", (event) => {
