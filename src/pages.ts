@@ -1012,6 +1012,47 @@ export const ASS_PAGE = `<!doctype html>
       }
       .group-title { margin: 0 0 8px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
       .group-items { margin: 0; color: #cbd5e1; font-size: 13px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+      .group-title-main { display: inline-flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+      .group-title-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+      .group-action-btn {
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 4px 8px;
+        background: #0f172a;
+        color: #cbd5e1;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .group-action-btn.danger {
+        border-color: #7f1d1d;
+        background: #3f1010;
+        color: #fecaca;
+      }
+      .group-action-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .group-batch-list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 6px;
+      }
+      .group-batch-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        color: #cbd5e1;
+        font-size: 13px;
+        line-height: 1.4;
+      }
+      .group-batch-item input { margin-top: 2px; }
+      .group-batch-empty {
+        margin: 0;
+        color: #94a3b8;
+        font-size: 12px;
+      }
       .word-menu {
         position: fixed;
         z-index: 70;
@@ -1361,6 +1402,8 @@ I just want a guy who's good-looking and fun."></textarea>
         { id: "cfg-default", name: "默认高亮", color: "&H0000FFFF" }
       ];
       let assignments = [];
+      let batchManageGroupId = "";
+      let batchManageSelectedKeys = new Set();
       let selectedContext = null;
       let editingCueOrder = null;
       let aiAnalyzing = false;
@@ -1940,6 +1983,10 @@ I just want a guy who's good-looking and fun."></textarea>
         return assignments.filter((item) => item.cueOrder === cueOrder);
       }
 
+      function getAssignmentKey(item) {
+        return String(item.cueOrder) + "::" + String(item.norm || "");
+      }
+
       function buildHighlightedHtml(text, cueOrder) {
         const current = getCueAssignments(cueOrder).map((item) => {
           const cfg = getConfigById(item.configId);
@@ -2017,23 +2064,110 @@ I just want a guy who's good-looking and fun."></textarea>
 
       function renderGroupedHighlights() {
         if (highlightConfigs.length === 0) {
+          batchManageGroupId = "";
+          batchManageSelectedKeys = new Set();
           groupedHighlights.innerHTML = '<p class="menu-empty">暂无高亮配置。</p>';
           return;
         }
+        if (batchManageGroupId && !highlightConfigs.some((cfg) => cfg.id === batchManageGroupId)) {
+          batchManageGroupId = "";
+          batchManageSelectedKeys = new Set();
+        }
         const html = [];
         for (const cfg of highlightConfigs) {
-          const items = assignments
+          const groupAssignments = assignments
             .filter((item) => item.configId === cfg.id)
-            .map((item) => "[" + String(item.cueOrder).padStart(3, "0") + "] " + item.word);
-          const deduped = [...new Set(items)];
+            .sort((a, b) => {
+              if (a.cueOrder !== b.cueOrder) return a.cueOrder - b.cueOrder;
+              return String(a.word || "").localeCompare(String(b.word || ""), "en");
+            });
+          const deduped = [...new Set(groupAssignments.map((item) => "[" + String(item.cueOrder).padStart(3, "0") + "] " + item.word))];
+          const isBatchManaging = batchManageGroupId === cfg.id;
+          const selectedCount = isBatchManaging ? groupAssignments.filter((item) => batchManageSelectedKeys.has(getAssignmentKey(item))).length : 0;
+          const actionHtml = isBatchManaging
+            ? (
+              '<button type="button" class="group-action-btn" data-action="group-select-all" data-config-id="' + cfg.id + '"' + (groupAssignments.length === 0 ? " disabled" : "") + '>全选</button>'
+              + '<button type="button" class="group-action-btn" data-action="group-cancel-manage" data-config-id="' + cfg.id + '">取消</button>'
+              + '<button type="button" class="group-action-btn danger" data-action="group-batch-delete" data-config-id="' + cfg.id + '"' + (selectedCount === 0 ? " disabled" : "") + '>删除所选(' + selectedCount + ')</button>'
+            )
+            : '<button type="button" class="group-action-btn" data-action="group-start-manage" data-config-id="' + cfg.id + '"' + (groupAssignments.length === 0 ? " disabled" : "") + '>批量管理</button>';
+          const batchListHtml = groupAssignments.length > 0
+            ? (
+              '<ul class="group-batch-list">'
+              + groupAssignments.map((item) => {
+                const key = getAssignmentKey(item);
+                const checked = batchManageSelectedKeys.has(key) ? " checked" : "";
+                return ''
+                  + '<li class="group-batch-item">'
+                  +   '<label>'
+                  +     '<input type="checkbox" data-action="group-toggle-item" data-config-id="' + cfg.id + '" data-assignment-key="' + encodeURIComponent(key) + '"' + checked + " /> "
+                  +     escapeHtml("[" + String(item.cueOrder).padStart(3, "0") + "] " + item.word)
+                  +   "</label>"
+                  + "</li>";
+              }).join("")
+              + "</ul>"
+            )
+            : '<p class="group-batch-empty">暂无词</p>';
           html.push(
             '<div class="group-card">'
-            + '<h3 class="group-title"><span class="dot" style="background:' + assColorToCssHex(cfg.color) + ';"></span>' + escapeHtml(cfg.name) + " <code>" + escapeHtml(cfg.color) + "</code></h3>"
-            + '<p class="group-items">' + (deduped.length > 0 ? escapeHtml(deduped.join("\\n")) : "暂无词") + "</p>"
+            + '<h3 class="group-title">'
+            +   '<span class="group-title-main"><span class="dot" style="background:' + assColorToCssHex(cfg.color) + ';"></span>' + escapeHtml(cfg.name) + " <code>" + escapeHtml(cfg.color) + "</code></span>"
+            +   '<span class="group-title-actions">' + actionHtml + "</span>"
+            + "</h3>"
+            + (isBatchManaging ? batchListHtml : ('<p class="group-items">' + (deduped.length > 0 ? escapeHtml(deduped.join("\\n")) : "暂无词") + "</p>"))
             + "</div>"
           );
         }
         groupedHighlights.innerHTML = html.join("");
+      }
+
+      function startGroupBatchManage(configId) {
+        const id = String(configId || "");
+        if (!id) return;
+        batchManageGroupId = id;
+        batchManageSelectedKeys = new Set();
+        renderGroupedHighlights();
+      }
+
+      function cancelGroupBatchManage(configId) {
+        if (!configId || batchManageGroupId !== configId) return;
+        batchManageGroupId = "";
+        batchManageSelectedKeys = new Set();
+        renderGroupedHighlights();
+      }
+
+      function selectAllGroupItems(configId) {
+        if (!configId || batchManageGroupId !== configId) return;
+        const keys = assignments
+          .filter((item) => item.configId === configId)
+          .map((item) => getAssignmentKey(item));
+        batchManageSelectedKeys = new Set(keys);
+        renderGroupedHighlights();
+      }
+
+      function toggleGroupBatchItem(configId, encodedKey, checked) {
+        if (!configId || batchManageGroupId !== configId) return;
+        const key = decodeURIComponent(String(encodedKey || ""));
+        if (!key) return;
+        if (checked) batchManageSelectedKeys.add(key);
+        else batchManageSelectedKeys.delete(key);
+        renderGroupedHighlights();
+      }
+
+      function deleteSelectedGroupItems(configId) {
+        if (!configId || batchManageGroupId !== configId) return;
+        const selected = new Set(batchManageSelectedKeys);
+        if (selected.size === 0) return;
+        if (!window.confirm("确认删除当前分组内选中的 " + selected.size + " 个词（词组）吗？")) return;
+        assignments = assignments.filter((item) => {
+          if (item.configId !== configId) return true;
+          return !selected.has(getAssignmentKey(item));
+        });
+        batchManageGroupId = "";
+        batchManageSelectedKeys = new Set();
+        renderPreprocess();
+        renderGroupedHighlights();
+        refreshPreviewText();
       }
 
       function hideWordMenu() {
@@ -2549,6 +2683,40 @@ I just want a guy who's good-looking and fun."></textarea>
           const configId = target.getAttribute("data-config-id");
           if (configId) applyAssignment(configId);
         }
+      });
+
+      groupedHighlights.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const action = target.getAttribute("data-action");
+        const configId = target.getAttribute("data-config-id");
+        if (!action || !configId) return;
+        if (action === "group-start-manage") {
+          startGroupBatchManage(configId);
+          return;
+        }
+        if (action === "group-cancel-manage") {
+          cancelGroupBatchManage(configId);
+          return;
+        }
+        if (action === "group-select-all") {
+          selectAllGroupItems(configId);
+          return;
+        }
+        if (action === "group-batch-delete") {
+          deleteSelectedGroupItems(configId);
+        }
+      });
+
+      groupedHighlights.addEventListener("change", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement)) return;
+        const action = target.getAttribute("data-action");
+        if (action !== "group-toggle-item") return;
+        const configId = target.getAttribute("data-config-id");
+        const encodedKey = target.getAttribute("data-assignment-key");
+        if (!configId || !encodedKey) return;
+        toggleGroupBatchItem(configId, encodedKey, target.checked);
       });
 
       document.addEventListener("mousedown", (event) => {
