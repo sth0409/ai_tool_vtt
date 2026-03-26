@@ -1570,7 +1570,7 @@ I just want a guy who's good-looking and fun."></textarea>
           'ASS_FILE="$SCRIPT_DIR/subtitle.ass"',
           'FFMPEG_BIN="' + safeFfmpegPath + '"',
           'OUTPUT_NAME="' + safeOutputName + '"',
-          'INPUT_VIDEO=$(osascript -e \'try\' -e \'POSIX path of (choose file with prompt "请选择要合并字幕的视频文件")\' -e \'on error number -128\' -e \'return ""\' -e \'end try\')',
+          "INPUT_VIDEO=$(osascript -e 'try' -e 'POSIX path of (choose file with prompt \"请选择要合并字幕的视频文件\")' -e 'on error number -128' -e 'return \"\"' -e 'end try')",
           'if [ -z "$INPUT_VIDEO" ]; then',
           '  echo "已取消选择视频。"',
           '  exit 1',
