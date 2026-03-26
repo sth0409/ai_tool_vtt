@@ -1162,6 +1162,26 @@ export const ASS_PAGE = `<!doctype html>
       }
       .modal-title { margin: 0 0 12px; font-size: 16px; color: #dbeafe; }
       .modal-actions { margin-top: 12px; display: flex; gap: 10px; justify-content: flex-end; }
+      .toolkit-grid { display: grid; gap: 10px; }
+      .toolkit-inline {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .toolkit-note {
+        margin: 6px 0 0;
+        font-size: 12px;
+        color: #94a3b8;
+        line-height: 1.5;
+      }
+      .toolkit-status {
+        min-height: 20px;
+        margin-top: 8px;
+        font-size: 13px;
+        color: #94a3b8;
+      }
+      .toolkit-status.error { color: #fca5a5; }
       @media (max-width: 820px) {
         .mini-grid { grid-template-columns: 1fr; }
       }
@@ -1264,6 +1284,7 @@ I just want a guy who's good-looking and fun."></textarea>
       <div class="actions-row">
         <button id="generateAssBtn" type="button">生成 ASS + 命令</button>
         <button id="downloadAssBtn" type="button" class="subtle-btn" disabled>下载 subtitle.ass</button>
+        <button id="downloadToolkitBtn" type="button" class="subtle-btn" disabled>一键工具包配置</button>
       </div>
 
       <section class="result">
@@ -1339,6 +1360,32 @@ I just want a guy who's good-looking and fun."></textarea>
       </div>
     </div>
 
+    <div id="toolkitModal" class="modal" hidden>
+      <div class="modal-card">
+        <h2 class="modal-title">一键工具包配置（Mac .command）</h2>
+        <div class="toolkit-grid">
+          <div class="field">
+            <label for="toolkitFfmpegPathInput">1) ffmpeg 位置设置</label>
+            <input id="toolkitFfmpegPathInput" type="text" placeholder="/usr/local/bin/ffmpeg" />
+            <div class="toolkit-inline" style="margin-top:8px;">
+              <button id="downloadFfmpegBtn" type="button" class="subtle-btn">下载 ffmpeg</button>
+            </div>
+            <p class="toolkit-note">可在终端执行 <code>which ffmpeg</code>（macOS/Linux）或 <code>where ffmpeg</code>（Windows）查路径。未安装请先下载并解压，再填写可执行文件路径。</p>
+          </div>
+          <div class="field">
+            <label for="toolkitOutputNameInput">2) 合并后新文件名（同目录）</label>
+            <input id="toolkitOutputNameInput" type="text" placeholder="留空则自动用 原文件名_merge_subtitle" />
+            <p class="toolkit-note">脚本执行时会弹出文件选择器选视频；输出到源视频同一目录。</p>
+          </div>
+        </div>
+        <div id="toolkitStatus" class="toolkit-status"></div>
+        <div class="modal-actions">
+          <button id="cancelToolkitBtn" type="button" class="subtle-btn">取消</button>
+          <button id="confirmToolkitBtn" type="button">打包下载</button>
+        </div>
+      </div>
+    </div>
+
     <script>
       const subtitleInput = document.getElementById("subtitleInput");
       const prepareHighlightBtn = document.getElementById("prepareHighlightBtn");
@@ -1384,11 +1431,19 @@ I just want a guy who's good-looking and fun."></textarea>
       const subtitleOverlayText = document.getElementById("subtitleOverlayText");
       const generateAssBtn = document.getElementById("generateAssBtn");
       const downloadAssBtn = document.getElementById("downloadAssBtn");
+      const downloadToolkitBtn = document.getElementById("downloadToolkitBtn");
       const outputAss = document.getElementById("outputAss");
       const outputCmd = document.getElementById("outputCmd");
       const aiLogMeta = document.getElementById("aiLogMeta");
       const clearAiLogBtn = document.getElementById("clearAiLogBtn");
       const aiLogOutput = document.getElementById("aiLogOutput");
+      const toolkitModal = document.getElementById("toolkitModal");
+      const toolkitFfmpegPathInput = document.getElementById("toolkitFfmpegPathInput");
+      const downloadFfmpegBtn = document.getElementById("downloadFfmpegBtn");
+      const toolkitOutputNameInput = document.getElementById("toolkitOutputNameInput");
+      const toolkitStatus = document.getElementById("toolkitStatus");
+      const cancelToolkitBtn = document.getElementById("cancelToolkitBtn");
+      const confirmToolkitBtn = document.getElementById("confirmToolkitBtn");
 
       let lastAssContent = "";
       let previewVideoUrl = "";
@@ -1444,6 +1499,257 @@ I just want a guy who's good-looking and fun."></textarea>
 
       function normalizeWord(value) {
         return String(value || "").replace(/\\s+/g, " ").trim().toLowerCase();
+      }
+
+      function setToolkitStatus(message, isError) {
+        if (!toolkitStatus) return;
+        toolkitStatus.textContent = String(message || "");
+        toolkitStatus.classList.toggle("error", Boolean(isError));
+      }
+
+      function shellEscapeDoubleQuoted(value) {
+        return String(value || "")
+          .replace(/\\/g, "\\\\")
+          .replace(/"/g, "\\\"")
+          .replace(/\$/g, "\\$");
+      }
+
+      function getPathLeaf(pathValue) {
+        const cleaned = String(pathValue || "").trim().replace(/[\\\\/]+$/g, "");
+        if (!cleaned) return "";
+        const parts = cleaned.split(/[\\\\/]/).filter(Boolean);
+        return parts.length > 0 ? parts[parts.length - 1] : "";
+      }
+
+      function splitNameExt(filename) {
+        const name = String(filename || "").trim();
+        if (!name) return { base: "", ext: "" };
+        const dot = name.lastIndexOf(".");
+        if (dot <= 0 || dot === name.length - 1) return { base: name, ext: "" };
+        return { base: name.slice(0, dot), ext: name.slice(dot) };
+      }
+
+      function buildMergedOutputName(videoName) {
+        const leaf = getPathLeaf(videoName) || "input.mp4";
+        const parsed = splitNameExt(leaf);
+        return parsed.base + "_merge_subtitle" + (parsed.ext || ".mp4");
+      }
+
+      function ensureOutputNameExtension(outputName, fallbackVideoName) {
+        const trimmed = String(outputName || "").trim();
+        if (!trimmed) return buildMergedOutputName(fallbackVideoName);
+        if (trimmed.includes(".")) return trimmed;
+        const ext = splitNameExt(getPathLeaf(fallbackVideoName)).ext || ".mp4";
+        return trimmed + ext;
+      }
+
+      function openToolkitModal() {
+        if (!toolkitModal) return;
+        if (toolkitOutputNameInput && !toolkitOutputNameInput.value.trim()) {
+          const previewName = String(previewVideo?.dataset?.fileName || "").trim();
+          toolkitOutputNameInput.value = buildMergedOutputName(previewName || "input.mp4");
+        }
+        setToolkitStatus("", false);
+        toolkitModal.hidden = false;
+      }
+
+      function closeToolkitModal() {
+        if (!toolkitModal) return;
+        toolkitModal.hidden = true;
+        setToolkitStatus("", false);
+      }
+
+      function buildToolkitCommandScript(ffmpegPath, outputName) {
+        const safeFfmpegPath = shellEscapeDoubleQuoted(ffmpegPath);
+        const safeOutputName = shellEscapeDoubleQuoted(outputName);
+        return [
+          "#!/bin/zsh",
+          "set -e",
+          "",
+          "SCRIPT_DIR=\\"$(cd \\"$(dirname \\"$0\\")\\" && pwd)\\"",
+          "ASS_FILE=\\"$SCRIPT_DIR/subtitle.ass\\"",
+          "FFMPEG_BIN=\\"" + safeFfmpegPath + "\\"",
+          "OUTPUT_NAME=\\"" + safeOutputName + "\\"",
+          "INPUT_VIDEO=$(osascript -e 'try' -e 'POSIX path of (choose file with prompt \"请选择要合并字幕的视频文件\")' -e 'on error number -128' -e 'return \"\"' -e 'end try')",
+          "INPUT_VIDEO=\\"$(printf \\"%s\\" \\"$INPUT_VIDEO\\" | tr -d \\"\\\\r\\" | sed -e \\"s/[[:space:]]*$//\\")\\"",
+          "if [ -z \\"$INPUT_VIDEO\\" ]; then",
+          "  echo \\"已取消选择视频。\\"",
+          "  exit 1",
+          "fi",
+          "INPUT_FILE=\\"$(basename \\"$INPUT_VIDEO\\")\\"",
+          "if [[ \\"$INPUT_FILE\\" == *.* ]]; then",
+          "  INPUT_STEM=\\"$(printf \\"%s\\" \\"$INPUT_FILE\\" | sed -e \\"s/\\\\.[^.]*$//\\")\\"",
+          "  INPUT_EXT=\\"$(printf \\"%s\\" \\"$INPUT_FILE\\" | sed -e \\"s/^.*\\\\.//\\")\\"",
+          "else",
+          "  INPUT_STEM=\\"$INPUT_FILE\\"",
+          "  INPUT_EXT=\\"mp4\\"",
+          "fi",
+          "if [ -z \\"$OUTPUT_NAME\\" ]; then",
+          "  OUTPUT_NAME=\\"$INPUT_STEM\\"_merge_subtitle.\\"$INPUT_EXT\\"",
+          "elif [[ \\"$OUTPUT_NAME\\" != *.* ]]; then",
+          "  OUTPUT_NAME=\\"$OUTPUT_NAME.\\"$INPUT_EXT\\"",
+          "fi",
+          "OUTPUT_VIDEO=\\"$(dirname \\"$INPUT_VIDEO\\")/$OUTPUT_NAME\\"",
+          "",
+          "if [ ! -f \\"$ASS_FILE\\" ]; then",
+          "  echo \\"subtitle.ass 不存在：$ASS_FILE\\"",
+          "  exit 1",
+          "fi",
+          "",
+          "if [ ! -f \\"$INPUT_VIDEO\\" ]; then",
+          "  echo \\"选择的视频不存在：$INPUT_VIDEO\\"",
+          "  exit 1",
+          "fi",
+          "",
+          "if [ -x \\"$FFMPEG_BIN\\" ]; then",
+          "  FFMPEG_CMD=\\"$FFMPEG_BIN\\"",
+          "elif command -v \\"$FFMPEG_BIN\\" >/dev/null 2>&1; then",
+          "  FFMPEG_CMD=\\"$(command -v \\"$FFMPEG_BIN\\")\\"",
+          "elif command -v ffmpeg >/dev/null 2>&1; then",
+          "  FFMPEG_CMD=\\"$(command -v ffmpeg)\\"",
+          "else",
+          "  echo \\"未找到 ffmpeg：$FFMPEG_BIN\\"",
+          "  echo \\"请先安装并在弹窗第1项填写 ffmpeg 完整路径。\\"",
+          "  exit 1",
+          "fi",
+          "",
+          "echo \\"使用 ffmpeg: $FFMPEG_CMD\\"",
+          "echo \\"输入视频: $INPUT_VIDEO\\"",
+          "echo \\"输出文件: $OUTPUT_VIDEO\\"",
+          "echo \\"开始合并字幕...\\"",
+          "if \\"$FFMPEG_CMD\\" -y -i \\"$INPUT_VIDEO\\" -vf \\"ass=$ASS_FILE\\" -c:a copy \\"$OUTPUT_VIDEO\\"; then",
+          "  echo \\"完成：$OUTPUT_VIDEO\\"",
+          "  exit 0",
+          "fi",
+          "",
+          "echo \\"音频复制失败，尝试兼容模式重编码...\\"",
+          "\\"$FFMPEG_CMD\\" -y -i \\"$INPUT_VIDEO\\" -vf \\"ass=$ASS_FILE\\" -c:v libx264 -preset medium -crf 18 -c:a aac -b:a 192k \\"$OUTPUT_VIDEO\\"",
+          "echo \\"完成：$OUTPUT_VIDEO\\""
+        ].join("\\n");
+      }
+
+      function buildToolkitReadme(ffmpegPath, outputName) {
+        return [
+          "使用步骤（macOS）：",
+          "1) 双击 merge_subtitle.command。",
+          "2) 系统会弹出文件选择器，选择要合并字幕的视频。",
+          "3) 脚本自动执行 ffmpeg，输出文件在源视频同目录。",
+          "",
+          "当前配置：",
+          "- ffmpeg 路径: " + ffmpegPath,
+          "- 输出文件名: " + (outputName || "自动：原文件名_merge_subtitle"),
+          "",
+          "提示：如果双击后被拦截，请在系统设置放行终端执行，或右键脚本选择“打开”。"
+        ].join("\\n");
+      }
+
+      function createCrc32Table() {
+        const table = new Uint32Array(256);
+        for (let i = 0; i < 256; i += 1) {
+          let c = i;
+          for (let j = 0; j < 8; j += 1) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+          table[i] = c >>> 0;
+        }
+        return table;
+      }
+
+      const ZIP_CRC32_TABLE = createCrc32Table();
+
+      function crc32(bytes) {
+        let crc = 0xffffffff;
+        for (let i = 0; i < bytes.length; i += 1) {
+          crc = ZIP_CRC32_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+        }
+        return (crc ^ 0xffffffff) >>> 0;
+      }
+
+      function toDosDateTime(date) {
+        const d = date instanceof Date ? date : new Date();
+        const year = Math.max(1980, d.getFullYear());
+        const month = d.getMonth() + 1;
+        const day = d.getDate();
+        const hours = d.getHours();
+        const minutes = d.getMinutes();
+        const seconds = Math.floor(d.getSeconds() / 2);
+        const dosTime = ((hours & 0x1f) << 11) | ((minutes & 0x3f) << 5) | (seconds & 0x1f);
+        const dosDate = (((year - 1980) & 0x7f) << 9) | ((month & 0x0f) << 5) | (day & 0x1f);
+        return { dosTime, dosDate };
+      }
+
+      function makeZipBlob(files) {
+        const encoder = new TextEncoder();
+        const chunks = [];
+        const centralChunks = [];
+        let offset = 0;
+        const now = toDosDateTime(new Date());
+
+        for (const file of files) {
+          const nameBytes = encoder.encode(file.name);
+          const dataBytes = encoder.encode(file.content);
+          const checksum = crc32(dataBytes);
+          const mode = file.executable ? 0o100755 : 0o100644;
+
+          const local = new Uint8Array(30 + nameBytes.length);
+          const ld = new DataView(local.buffer);
+          ld.setUint32(0, 0x04034b50, true);
+          ld.setUint16(4, 20, true);
+          ld.setUint16(6, 0, true);
+          ld.setUint16(8, 0, true);
+          ld.setUint16(10, now.dosTime, true);
+          ld.setUint16(12, now.dosDate, true);
+          ld.setUint32(14, checksum, true);
+          ld.setUint32(18, dataBytes.length, true);
+          ld.setUint32(22, dataBytes.length, true);
+          ld.setUint16(26, nameBytes.length, true);
+          ld.setUint16(28, 0, true);
+          local.set(nameBytes, 30);
+          chunks.push(local, dataBytes);
+
+          const central = new Uint8Array(46 + nameBytes.length);
+          const cd = new DataView(central.buffer);
+          cd.setUint32(0, 0x02014b50, true);
+          cd.setUint16(4, (3 << 8) | 20, true);
+          cd.setUint16(6, 20, true);
+          cd.setUint16(8, 0, true);
+          cd.setUint16(10, 0, true);
+          cd.setUint16(12, now.dosTime, true);
+          cd.setUint16(14, now.dosDate, true);
+          cd.setUint32(16, checksum, true);
+          cd.setUint32(20, dataBytes.length, true);
+          cd.setUint32(24, dataBytes.length, true);
+          cd.setUint16(28, nameBytes.length, true);
+          cd.setUint16(30, 0, true);
+          cd.setUint16(32, 0, true);
+          cd.setUint16(34, 0, true);
+          cd.setUint16(36, 0, true);
+          cd.setUint32(38, mode << 16, true);
+          cd.setUint32(42, offset, true);
+          central.set(nameBytes, 46);
+          centralChunks.push(central);
+
+          offset += local.length + dataBytes.length;
+        }
+
+        const centralStart = offset;
+        for (const entry of centralChunks) {
+          chunks.push(entry);
+          offset += entry.length;
+        }
+        const centralSize = offset - centralStart;
+
+        const eocd = new Uint8Array(22);
+        const ed = new DataView(eocd.buffer);
+        ed.setUint32(0, 0x06054b50, true);
+        ed.setUint16(4, 0, true);
+        ed.setUint16(6, 0, true);
+        ed.setUint16(8, centralChunks.length, true);
+        ed.setUint16(10, centralChunks.length, true);
+        ed.setUint32(12, centralSize, true);
+        ed.setUint32(16, centralStart, true);
+        ed.setUint16(20, 0, true);
+        chunks.push(eocd);
+
+        return new Blob(chunks, { type: "application/zip" });
       }
 
       function setAiStatus(message, isError) {
@@ -2536,6 +2842,7 @@ I just want a guy who's good-looking and fun."></textarea>
         outputCmd.innerHTML = '<span class="error">' + message + "</span>";
         lastAssContent = "";
         downloadAssBtn.disabled = true;
+        if (downloadToolkitBtn) downloadToolkitBtn.disabled = true;
       }
 
       if (prepareHighlightBtn) prepareHighlightBtn.addEventListener("click", () => {
@@ -2855,6 +3162,7 @@ I just want a guy who's good-looking and fun."></textarea>
           "ffmpeg -i \\"input.mp4\\" -vf \\"ass=subtitle.ass\\" -c:v libx264 -preset medium -crf 18 -c:a aac -b:a 192k \\"output.mp4\\""
         ].join("\\n");
         downloadAssBtn.disabled = false;
+        if (downloadToolkitBtn) downloadToolkitBtn.disabled = false;
       });
 
       downloadAssBtn.addEventListener("click", () => {
@@ -2868,6 +3176,62 @@ I just want a guy who's good-looking and fun."></textarea>
         a.click();
         a.remove();
         URL.revokeObjectURL(url);
+      });
+
+      if (downloadToolkitBtn) downloadToolkitBtn.addEventListener("click", () => {
+        if (!lastAssContent) {
+          showError("请先点击“生成 ASS + 命令”，再配置并下载工具包。");
+          return;
+        }
+        openToolkitModal();
+      });
+
+      if (downloadFfmpegBtn) downloadFfmpegBtn.addEventListener("click", () => {
+        window.open("https://deolaha.ca/pub/ffmpeg/ffmpeg-8.1.zip", "_blank", "noopener");
+      });
+
+      if (cancelToolkitBtn) cancelToolkitBtn.addEventListener("click", closeToolkitModal);
+      if (toolkitModal) toolkitModal.addEventListener("mousedown", (event) => {
+        if (event.target === toolkitModal) closeToolkitModal();
+      });
+
+      if (confirmToolkitBtn) confirmToolkitBtn.addEventListener("click", async () => {
+        if (!lastAssContent) {
+          setToolkitStatus("请先生成 ASS 内容。", true);
+          return;
+        }
+        const ffmpegPath = String(toolkitFfmpegPathInput?.value || "").trim();
+        const fallbackVideoName = String(previewVideo?.dataset?.fileName || "input.mp4");
+        const outputName = ensureOutputNameExtension(String(toolkitOutputNameInput?.value || "").trim(), fallbackVideoName);
+        if (!ffmpegPath) {
+          setToolkitStatus("请填写 ffmpeg 可执行文件路径。", true);
+          return;
+        }
+        if (toolkitOutputNameInput) toolkitOutputNameInput.value = outputName;
+
+        try {
+          setToolkitStatus("正在打包下载...", false);
+          const commandScript = buildToolkitCommandScript(ffmpegPath, outputName);
+          const readme = buildToolkitReadme(ffmpegPath, outputName);
+          const zipBlob = makeZipBlob([
+            { name: "subtitle.ass", content: lastAssContent, executable: false },
+            { name: "merge_subtitle.command", content: commandScript + "\\n", executable: true },
+            { name: "README.txt", content: readme + "\\n", executable: false }
+          ]);
+
+          const url = URL.createObjectURL(zipBlob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "ass_toolkit.zip";
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+          setToolkitStatus("已下载 ass_toolkit.zip", false);
+          closeToolkitModal();
+        } catch (error) {
+          setToolkitStatus("打包失败: " + String(error?.message || "未知错误"), true);
+        }
       });
 
       if (clearAiLogBtn) clearAiLogBtn.addEventListener("click", clearAiLogs);
